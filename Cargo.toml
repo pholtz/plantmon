@@ -1,0 +1,19 @@
+[package]
+name = "plantmon"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "A persistent houseplant collection and care-calendar TUI"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive", "env"] }
+crossterm = "0.28"
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[profile.release]
+lto = "thin"
+strip = true
