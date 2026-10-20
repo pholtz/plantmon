@@ -239,8 +239,9 @@ impl App {
         if app.settings.manual_order {
             app.grouping = Grouping::Manual;
             app.refilter();
-            app.reload_history()?;
         }
+        app.selected = 0;
+        app.reload_history()?;
         Ok(app)
     }
 
@@ -1143,6 +1144,36 @@ mod tests {
         assert!(app.toast.is_empty());
         assert!(!app.error);
         assert!(app.toast_expires_at.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn startup_selects_the_first_plant_after_restoring_manual_order() -> Result<()> {
+        let mut db = Database::memory()?;
+        let taxon = db.taxa()?.remove(0);
+        let first = db.add_plant(
+            &taxon,
+            &PlantInput {
+                nickname: "Zebra".into(),
+                ..Default::default()
+            },
+            model::now(),
+        )?;
+        let last = db.add_plant(
+            &taxon,
+            &PlantInput {
+                nickname: "Alpha".into(),
+                ..Default::default()
+            },
+            model::now(),
+        )?;
+        db.reorder_plants(&[first, last])?;
+
+        let app = App::new(db)?;
+
+        assert_eq!(app.grouping, Grouping::Manual);
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.selected_plant().unwrap().name(), "Zebra");
         Ok(())
     }
 

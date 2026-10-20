@@ -4,6 +4,7 @@ mod catalog;
 mod db;
 mod environment;
 mod help;
+mod knowledge;
 mod model;
 mod settings;
 mod ui;
@@ -45,6 +46,9 @@ struct Args {
     /// Print the bundled searchable botanical catalog and exit
     #[arg(long, value_name = "SEARCH")]
     catalog: Option<String>,
+    /// Print source-backed plant knowledge and exit
+    #[arg(long, value_name = "SEARCH")]
+    guide: Option<String>,
     /// Ring the terminal bell when a task becomes due while monitoring
     #[arg(long)]
     bell: bool,
@@ -58,9 +62,13 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
+    if let Some(query) = &args.guide {
+        print!("{}", knowledge::render(query)?);
+        return Ok(());
+    }
     if !(args.check || io::stdin().is_terminal() && io::stdout().is_terminal()) {
         bail!(
-            "plantmon needs an interactive terminal. Use --check or --catalog '' for plain text."
+            "plantmon needs an interactive terminal. Use --check, --catalog '', or --guide '' for plain text."
         );
     }
     let database = if args.demo {

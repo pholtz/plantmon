@@ -1,0 +1,131 @@
+schema_version = 1
+
+[[profile]]
+scope = "care_group"
+key = "strappy foliage"
+title = "Strappy foliage"
+summary = "A descriptive Plantmon label for plants with long, narrow, arching leaves."
+caveat = "This is not a botanical rank or a care regime; use taxon-level guidance for light, water, and substrate."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "strappy-foliage-interpretation"
+section = "care"
+topic = "scope"
+title = "Leaf shape is not a watering rule"
+text = "Use this group to recognize growth form, not to schedule care. Check the identified plant and its potting mix; general houseplant guidance recommends watering from actual plant and soil conditions rather than a label or calendar alone."
+source_ids = ["umn-watering-houseplants"]
+
+[[profile]]
+scope = "care_group"
+key = "trees"
+title = "Trees"
+summary = "A growth-form label for woody plants that naturally develop a trunk or tree-like framework."
+caveat = "Indoor trees come from many unrelated families and habitats, so this group intentionally carries no shared water interval."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "trees-container-care"
+section = "care"
+topic = "container-observation"
+title = "Container conditions matter more than the label"
+text = "Larger plants and plants in brighter positions may use water faster, but roots still need drainage and air. Check the mix and empty saucers instead of assuming all indoor trees need the same routine."
+source_ids = ["umn-watering-houseplants"]
+
+[[profile]]
+scope = "care_group"
+key = "tropical foliage"
+title = "Tropical foliage"
+summary = "A broad horticultural label for tropical plants grown chiefly for their leaves."
+caveat = "The label describes ornamental use and broad climate origin, not one humidity, light, or watering target."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "tropical-foliage-observation"
+section = "care"
+topic = "scope"
+title = "Start with the individual plant"
+text = "Assess leaf condition, growth, roots, light, and soil before changing care. Even among tropical houseplants, water use changes with plant size, light, season, and the potting mix."
+source_ids = ["umn-watering-houseplants"]
+
+[[profile]]
+scope = "care_group"
+key = "flowering"
+title = "Flowering"
+summary = "A Plantmon label for taxa whose flowers or flower bracts are an important ornamental feature."
+caveat = "Blooming does not create a universal care schedule; species-level light, dormancy, and pruning guidance takes precedence."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "flowering-growth-cycle"
+section = "care"
+topic = "growth-cycle"
+title = "Feed growth, not the label"
+text = "Houseplant fertilizer is most useful when a plant is actively producing new leaves, roots, buds, or stems. Species-specific facts should determine whether flowering also depends on pruning, day length, or a seasonal rest."
+source_ids = ["umn-watering-houseplants"]
+
+[[profile]]
+scope = "care_group"
+key = "humidity loving"
+title = "Humidity loving"
+summary = "A care label for plants that perform better with more atmospheric moisture than a dry room usually provides."
+caveat = "Humidity is moisture in the air; it does not mean keeping roots saturated."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "humidity-loving-methods"
+section = "care"
+topic = "humidity"
+title = "Build a humid microclimate"
+text = "Grouping plants, using a pebble tray with water below the pot, or using a humidifier can raise humidity around sensitive plants. Keep the root zone independently well drained."
+source_ids = ["umn-winter-houseplants", "umn-watering-houseplants"]
+
+[[profile.fact]]
+id = "humidity-loving-symptoms"
+section = "care"
+topic = "diagnosis"
+title = "Do not diagnose from one symptom"
+text = "Brown edges can accompany low humidity in sensitive taxa, but water quality, root stress, direct sun, and other conditions can look similar. Check the taxon profile before responding."
+source_ids = [
+    "ncsu-aphelandra-squarrosa",
+    "ncsu-goeppertia-insignis",
+    "ncsu-goeppertia-warszewiczii",
+]
+
+[[profile]]
+scope = "care_group"
+key = "prayer plants"
+title = "Prayer plants"
+summary = "A horticultural group centered on patterned members of Marantaceae whose leaves may reposition between day and night."
+caveat = "Common names overlap across genera; botanical identity remains the more reliable lookup key."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "prayer-plants-movement"
+section = "peculiarity"
+topic = "nyctinasty"
+title = "The leaves can follow a daily rhythm"
+text = "Goeppertia leaves may fold upward in darkness, a movement called nyctinasty that gives prayer plants their common name."
+source_ids = ["ncsu-goeppertia"]
+
+[[profile.fact]]
+id = "prayer-plants-care"
+section = "care"
+topic = "light-water-and-humidity"
+title = "Warm, filtered, and evenly moist"
+text = "Calatheas and their close horticultural relatives generally favor warm, humid conditions, bright indirect light, and evenly moist compost during active growth. Reduce watering in winter and never leave roots standing in water."
+source_ids = ["rhs-calathea-guide"]
+
+[[profile.fact]]
+id = "prayer-plants-water-quality"
+section = "care"
+topic = "water-quality"
+title = "Water quality can show at the margins"
+text = "Rainwater or distilled water avoids the lime and chlorine found in some tap water. The RHS notes that tap water may also be left to stand before use."
+source_ids = ["rhs-calathea-guide"]

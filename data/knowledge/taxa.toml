@@ -1,0 +1,178 @@
+schema_version = 1
+
+[[profile]]
+scope = "taxon"
+key = "Chlorophytum comosum"
+title = "Chlorophytum comosum"
+summary = "Spider plant is a resilient, arching perennial valued for its cascading plantlets."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "chlorophytum-comosum-range"
+section = "background"
+topic = "native-range"
+title = "A broadly African native range"
+text = "Kew accepts the species in Asparagaceae and records a native range from western tropical Africa to Cameroon, and from Ethiopia south to South Africa."
+source_ids = ["kew-chlorophytum-comosum"]
+
+[[profile.fact]]
+id = "chlorophytum-comosum-care"
+section = "care"
+topic = "light-and-water"
+title = "Flexible, but protect it from extremes"
+text = "Medium indirect light and moist, well-drained soil suit spider plant. It tolerates deep shade and some dryness, but direct sun can damage foliage; reduce watering during winter."
+source_ids = ["ncsu-chlorophytum-comosum"]
+
+[[profile.fact]]
+id = "chlorophytum-comosum-plantlets"
+section = "peculiarity"
+topic = "propagation"
+title = "Its runners make ready-made plants"
+text = "Long stolons carry flowers and plantlets that root readily. NC State notes that short days and long uninterrupted nights encourage stolon and plantlet development."
+source_ids = ["ncsu-chlorophytum-comosum"]
+
+[[profile]]
+scope = "taxon"
+key = "Pachira aquatica"
+title = "Pachira aquatica"
+summary = "Money tree is a wet-tropical tree kept much smaller in containers than in its native habitat."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "pachira-aquatica-range"
+section = "background"
+topic = "native-range"
+title = "A tropical American wetland tree"
+text = "Kew accepts Pachira aquatica in Malvaceae, records it from Mexico to southern tropical America, and describes it as a tree of the wet tropical biome."
+source_ids = ["kew-pachira-aquatica"]
+
+[[profile.fact]]
+id = "pachira-aquatica-care"
+section = "care"
+topic = "light-and-water"
+title = "Bright shade and free drainage"
+text = "Provide indirect light or a mix of sun and shade, along with a moist, well-drained potting mix. Empty standing water because saturated roots can rot, even though the species grows in wet habitats outdoors."
+source_ids = ["ncsu-pachira-aquatica"]
+
+[[profile.fact]]
+id = "pachira-aquatica-braiding"
+section = "peculiarity"
+topic = "growth"
+title = "Braiding is horticultural, not its natural form"
+text = "Young trunks are flexible enough to braid. In habitat the tree can reach about 60 feet, while houseplants commonly remain 6–8 feet and are unlikely to flower indoors."
+source_ids = ["ncsu-pachira-aquatica"]
+
+[[profile]]
+scope = "taxon"
+key = "Aphelandra squarrosa"
+title = "Aphelandra squarrosa"
+summary = "Zebra plant combines boldly veined foliage with yellow flower bracts and demanding tropical care."
+caveat = "The familiar horticultural name is not taxonomically settled: Kew currently lists Aphelandra squarrosa as unplaced."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "aphelandra-squarrosa-taxonomy"
+section = "background"
+topic = "taxonomy"
+title = "A useful name with unresolved status"
+text = "NC State uses Aphelandra squarrosa for the Brazilian zebra plant in Acanthaceae, while Kew marks that botanical name as unplaced rather than accepted or synonymized. This guide retains the familiar horticultural name and makes the uncertainty explicit."
+source_ids = ["ncsu-aphelandra-squarrosa", "kew-aphelandra-squarrosa"]
+
+[[profile.fact]]
+id = "aphelandra-squarrosa-care"
+section = "care"
+topic = "light-water-and-humidity"
+title = "Warm, humid, and evenly moist"
+text = "Give it warm bright indirect light, high humidity, and an acidic, well-drained mix. Do not let the mix dry completely, but avoid soggy soil; cool, dry, or overly sunny conditions can trigger leaf damage or drop."
+source_ids = ["ncsu-aphelandra-squarrosa"]
+
+[[profile.fact]]
+id = "aphelandra-squarrosa-winter"
+section = "care"
+topic = "seasonal-care"
+title = "Ease back during winter"
+text = "The plant may enter semi-dormancy in winter. Reduce watering without stopping it, then resume weak feeding when new growth appears."
+source_ids = ["ncsu-aphelandra-squarrosa"]
+
+[[profile.fact]]
+id = "aphelandra-squarrosa-bracts"
+section = "peculiarity"
+topic = "flowers-and-propagation"
+title = "The display is foliage plus bracts"
+text = "Prominent white veins create the zebra pattern, while bright yellow bracts surround the small flowers. Pruning after flowering controls legginess, and the removed stems can be rooted as cuttings."
+source_ids = ["ncsu-aphelandra-squarrosa"]
+
+[[profile]]
+scope = "taxon"
+key = "Goeppertia insignis"
+title = "Goeppertia insignis"
+summary = "Rattlesnake plant is a Brazilian prayer plant with long patterned leaves and purple undersides."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "goeppertia-insignis-taxonomy"
+section = "background"
+topic = "taxonomy-and-range"
+title = "The accepted name behind rattlesnake calathea"
+text = "Kew accepts Goeppertia insignis as a wet-tropical perennial native to southeastern Brazil. Calathea lancifolia, Goeppertia lancifolia, Calathea insignis, and Maranta insignis are recorded synonyms."
+source_ids = ["kew-goeppertia-insignis"]
+
+[[profile.fact]]
+id = "goeppertia-insignis-care"
+section = "care"
+topic = "light-water-and-humidity"
+title = "Stable warmth and moist, airy roots"
+text = "Use limited sun to bright filtered shade, high humidity, and a moist but well-drained peaty mix. Avoid full sun, drafts, abrupt temperature changes, and wet soil; reduce watering and feeding in winter."
+source_ids = ["ncsu-goeppertia-insignis"]
+
+[[profile.fact]]
+id = "goeppertia-insignis-leaves"
+section = "peculiarity"
+topic = "foliage"
+title = "The common name comes from its markings"
+text = "Its long, wavy leaves carry alternating dark ellipses reminiscent of rattlesnake markings, with purple undersides and a fountain-like habit."
+source_ids = ["ncsu-goeppertia-insignis"]
+
+[[profile]]
+scope = "taxon"
+key = "Goeppertia warszewiczii"
+title = "Goeppertia warszewiczii"
+summary = "Jungle velvet calathea is a Central American prayer plant with soft patterned foliage."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "goeppertia-warszewiczii-taxonomy"
+section = "background"
+topic = "taxonomy-and-range"
+title = "A Goeppertia with a familiar Calathea synonym"
+text = "Kew accepts Goeppertia warszewiczii as a wet-tropical perennial native to Central America and records Calathea warszewiczii among its synonyms."
+source_ids = ["kew-goeppertia-warszewiczii"]
+
+[[profile.fact]]
+id = "goeppertia-warszewiczii-care"
+section = "care"
+topic = "light-water-and-humidity"
+title = "Filtered light, careful water, high humidity"
+text = "Provide bright indirect light, stable warmth, humidity above 60%, and a moist but well-drained mix. Rainwater or distilled water can reduce fluoride-related browning; direct sun and saturated soil can damage the plant."
+source_ids = ["ncsu-goeppertia-warszewiczii"]
+
+[[profile.fact]]
+id = "goeppertia-warszewiczii-namesake"
+section = "history"
+topic = "namesake"
+title = "Named for a nineteenth-century collector"
+text = "The epithet honors Polish gardener and plant collector Józef Warszewicz Ritter von Rawicz, who introduced the plant into cultivation in Berlin."
+source_ids = ["ncsu-goeppertia-warszewiczii"]
+
+[[profile.fact]]
+id = "goeppertia-warszewiczii-texture"
+section = "peculiarity"
+topic = "foliage-and-flowers"
+title = "Velvet above, purple below"
+text = "The large leaves have a soft green feather pattern and densely hairy purple undersides. Unlike many cultivated Goeppertia, this species can flower indoors."
+source_ids = ["ncsu-goeppertia-warszewiczii"]

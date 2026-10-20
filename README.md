@@ -228,6 +228,28 @@ intervals. Rebuild to ship catalog additions. Startup inserts missing catalog
 entries without overwriting existing entries, individual schedules, custom taxa,
 or journal entries.
 
+### Plant knowledge pilot
+
+`data/knowledge/` contains an initial source-backed guide for the five taxa,
+four families, and six care groups represented in the development collection.
+Taxon facts cover care, background, history, and peculiarities. Family profiles
+provide botanical context, while broad care-group profiles explicitly avoid
+presenting labels such as `trees` or `flowering` as universal care instructions.
+
+Sources, access dates, review dates, content versions, and per-fact citations are
+stored with the data. The loader rejects malformed documents, duplicate IDs,
+unknown citations, and subjects absent from the catalog. See
+`data/knowledge/README.md` for the schema and source policy.
+
+The full TUI guide is still experimental. For now, inspect compiled profiles and
+their source trail in plain text:
+
+```sh
+plantmon --guide 'jungle velvet'
+plantmon --guide 'Marantaceae'
+plantmon --guide 'humidity loving'
+```
+
 ## Storage and command-line tools
 
 Default database: **`scripts/plantmon/data/plantmon.sqlite3`**, resolved from the
@@ -252,6 +274,9 @@ plantmon --check
 plantmon --catalog 'hoyas'
 plantmon --catalog 'Thai Constellation'
 plantmon --catalog ''
+
+# Search source-backed plant knowledge:
+plantmon --guide 'prayer plants'
 ```
 
 `--demo` uses an in-memory database and discards all changes on exit, regardless

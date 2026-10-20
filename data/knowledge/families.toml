@@ -1,0 +1,109 @@
+schema_version = 1
+
+[[profile]]
+scope = "family"
+key = "Asparagaceae"
+title = "Asparagaceae"
+summary = "The asparagus family is a large, morphologically varied flowering-plant family with a worldwide distribution."
+caveat = "Family traits provide botanical context, not a shared houseplant care prescription."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "asparagaceae-diversity"
+section = "background"
+topic = "diversity"
+title = "Far broader than garden asparagus"
+text = "Kew describes a cosmopolitan family of roughly 150 genera and 2,595 species, including herbs, shrubs, climbers, and tree-like plants."
+source_ids = ["kew-asparagaceae"]
+
+[[profile.fact]]
+id = "asparagaceae-storage"
+section = "peculiarity"
+topic = "morphology"
+title = "Many forms store growth below ground"
+text = "Members may grow from rhizomes, bulbs, corms, tubers, tuberous roots, or a woody caudex. Flowers often have six tepals and six stamens, while fruits are commonly capsules or berries."
+source_ids = ["kew-asparagaceae"]
+
+[[profile]]
+scope = "family"
+key = "Malvaceae"
+title = "Malvaceae"
+summary = "The mallow family includes herbs, shrubs, and trees, especially across tropical regions."
+caveat = "The family includes plants with very different habitats and care needs."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "malvaceae-form"
+section = "background"
+topic = "morphology"
+title = "A family ranging from herbs to trees"
+text = "Kew describes Malvaceae as annual or perennial herbs, shrubs, and less often trees. Leaves are usually alternate and often palmately veined; many flowers have five petals and stamens joined into a tube."
+source_ids = ["kew-malvaceae"]
+
+[[profile.fact]]
+id = "malvaceae-circumscription"
+section = "history"
+topic = "taxonomy"
+title = "Older books may use narrower families"
+text = "The modern broad treatment incorporates groups formerly recognized as Bombacaceae, Tiliaceae, Sterculiaceae, and others. That history explains why Pachira may appear under Bombacaceae in older references."
+source_ids = ["kew-malvaceae"]
+
+[[profile]]
+scope = "family"
+key = "Acanthaceae"
+title = "Acanthaceae"
+summary = "Acanthaceae is chiefly a tropical and subtropical family of herbs and shrubs."
+caveat = "Shared floral traits do not imply that every member needs the same indoor conditions."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "acanthaceae-form"
+section = "background"
+topic = "distribution-and-form"
+title = "Mostly tropical herbs and shrubs"
+text = "Kew describes a widely tropical and subtropical family dominated by herbs and shrubs, with opposite leaves common across the group."
+source_ids = ["kew-acanthaceae"]
+
+[[profile.fact]]
+id = "acanthaceae-capsules"
+section = "peculiarity"
+topic = "flowers-and-fruit"
+title = "Bracts can be conspicuous, and fruits can be forceful"
+text = "Flowers are often associated with differentiated bracts. The usual fruit is a two-chambered capsule that opens explosively, with seeds commonly held on hook-shaped structures."
+source_ids = ["kew-acanthaceae"]
+
+[[profile]]
+scope = "family"
+key = "Marantaceae"
+title = "Marantaceae"
+summary = "The prayer-plant family is a pantropical lineage of mostly rhizomatous herbs, richest in the Neotropics."
+caveat = "Species-level guidance should override this family background."
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[[profile.fact]]
+id = "marantaceae-form"
+section = "background"
+topic = "morphology"
+title = "Rhizomes, leaf joints, and asymmetric flowers"
+text = "Kew describes Marantaceae as mainly rhizomatous herbs. Their leaves have a thickened joint called a pulvinus, and paired flowers are characteristically asymmetric mirror images."
+source_ids = ["kew-marantaceae"]
+
+[[profile.fact]]
+id = "marantaceae-distribution"
+section = "background"
+topic = "distribution"
+title = "Pantropical, with a New World center"
+text = "The family occurs across the tropics and has its greatest generic and species diversity in the Neotropics."
+source_ids = ["kew-marantaceae"]
+
+[[profile.fact]]
+id = "marantaceae-use"
+section = "history"
+topic = "human-use"
+title = "The family is more than ornamental foliage"
+text = "Marantaceae includes starch-storing plants and useful species as well as the patterned ornamentals commonly grown indoors."
+source_ids = ["kew-marantaceae"]

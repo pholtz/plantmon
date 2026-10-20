@@ -1,0 +1,145 @@
+schema_version = 1
+
+[[source]]
+id = "kew-chlorophytum-comosum"
+title = "Chlorophytum comosum (Thunb.) Jacques"
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:532810-1"
+kind = "taxonomy"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "ncsu-chlorophytum-comosum"
+title = "Chlorophytum comosum"
+organization = "NC State Extension Gardener Plant Toolbox"
+url = "https://plants.ces.ncsu.edu/plants/chlorophytum-comosum/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-pachira-aquatica"
+title = "Pachira aquatica Aubl."
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:179762-2"
+kind = "taxonomy"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "ncsu-pachira-aquatica"
+title = "Pachira aquatica"
+organization = "NC State Extension Gardener Plant Toolbox"
+url = "https://plants.ces.ncsu.edu/plants/pachira-aquatica/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-aphelandra-squarrosa"
+title = "Aphelandra squarrosa Nees"
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:315544-2"
+kind = "taxonomy"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "ncsu-aphelandra-squarrosa"
+title = "Aphelandra squarrosa"
+organization = "NC State Extension Gardener Plant Toolbox"
+url = "https://plants.ces.ncsu.edu/plants/aphelandra-squarrosa/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-goeppertia-insignis"
+title = "Goeppertia insignis (W.Bull ex W.E.Marshall) J.M.A.Braga, L.J.T.Cardoso & R.Couto"
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:77174285-1"
+kind = "taxonomy"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "ncsu-goeppertia-insignis"
+title = "Goeppertia insignis"
+organization = "NC State Extension Gardener Plant Toolbox"
+url = "https://plants.ces.ncsu.edu/plants/goeppertia-insignis/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-goeppertia-warszewiczii"
+title = "Goeppertia warszewiczii (Lem.) Borchs. & S.Suárez"
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:77130098-1"
+kind = "taxonomy"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "ncsu-goeppertia-warszewiczii"
+title = "Goeppertia warszewiczii"
+organization = "NC State Extension Gardener Plant Toolbox"
+url = "https://plants.ces.ncsu.edu/plants/goeppertia-warszewiczii/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "ncsu-goeppertia"
+title = "Goeppertia"
+organization = "NC State Extension Gardener Plant Toolbox"
+url = "https://plants.ces.ncsu.edu/plants/goeppertia/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-asparagaceae"
+title = "Asparagaceae Juss."
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:30275682-2/general-information"
+kind = "botanical_reference"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-malvaceae"
+title = "Malvaceae Juss."
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:30000208-2/general-information"
+kind = "botanical_reference"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-acanthaceae"
+title = "Acanthaceae Juss."
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:30000618-2/general-information"
+kind = "botanical_reference"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "kew-marantaceae"
+title = "Marantaceae R.Br."
+organization = "Plants of the World Online, Royal Botanic Gardens, Kew"
+url = "https://powo.science.kew.org/taxon/urn:lsid:ipni.org:names:30001412-2/general-information"
+kind = "botanical_reference"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "rhs-calathea-guide"
+title = "How to grow calatheas"
+organization = "Royal Horticultural Society"
+url = "https://www.rhs.org.uk/plants/calathea/growing-guide"
+kind = "horticultural_society"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "umn-winter-houseplants"
+title = "Winter houseplant tips"
+organization = "University of Minnesota Extension"
+url = "https://extension.umn.edu/about/our-stories/news/winter-houseplant-tips"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "umn-watering-houseplants"
+title = "Watering houseplants"
+organization = "University of Minnesota Extension"
+url = "https://extension.umn.edu/yard-and-garden-news/watering-houseplants"
+kind = "university_extension"
+accessed_on = "2026-10-19"
