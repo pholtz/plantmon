@@ -4,6 +4,183 @@ use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 pub const DAY: i64 = 86_400;
 pub const MAX_INTERVAL: i64 = 3650;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SunExposure {
+    FullShade,
+    MostlyShade,
+    PartialSun,
+    MostlySun,
+    FullSun,
+}
+
+impl SunExposure {
+    pub const ALL: [Self; 5] = [
+        Self::FullShade,
+        Self::MostlyShade,
+        Self::PartialSun,
+        Self::MostlySun,
+        Self::FullSun,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::FullShade => "full_shade",
+            Self::MostlyShade => "mostly_shade",
+            Self::PartialSun => "partial_sun",
+            Self::MostlySun => "mostly_sun",
+            Self::FullSun => "full_sun",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FullShade => "Full shade",
+            Self::MostlyShade => "Mostly shade",
+            Self::PartialSun => "Partial sun",
+            Self::MostlySun => "Mostly sun",
+            Self::FullSun => "Full sun",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|exposure| exposure.key() == value)
+    }
+
+    pub fn level(self) -> u8 {
+        Self::ALL
+            .iter()
+            .position(|exposure| *exposure == self)
+            .expect("exposure is in ALL") as u8
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlantEnvironment {
+    pub exposure: Option<SunExposure>,
+    pub temperature_c: Option<f64>,
+    pub humidity_percent: Option<f64>,
+}
+
+impl PlantEnvironment {
+    pub fn is_empty(self) -> bool {
+        self.exposure.is_none() && self.temperature_c.is_none() && self.humidity_percent.is_none()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentScope {
+    Home,
+    Plant,
+}
+
+impl EnvironmentScope {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Home => "home",
+            Self::Plant => "plant",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Home => "Home",
+            Self::Plant => "Plant",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "home" => Some(Self::Home),
+            "plant" => Some(Self::Plant),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentSource {
+    Manual,
+    Import,
+    Sensor,
+}
+
+impl EnvironmentSource {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Import => "import",
+            Self::Sensor => "sensor",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "manual" => Some(Self::Manual),
+            "import" => Some(Self::Import),
+            "sensor" => Some(Self::Sensor),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentValueSource {
+    Baseline,
+    Override,
+    Reading(EnvironmentSource),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnvironmentValue {
+    pub value: f64,
+    pub scope: EnvironmentScope,
+    pub source: EnvironmentValueSource,
+    pub observed_at: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MetricSummary {
+    pub count: usize,
+    pub minimum: f64,
+    pub maximum: f64,
+    pub mean: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EnvironmentSummary {
+    pub temperature: Option<MetricSummary>,
+    pub humidity: Option<MetricSummary>,
+    pub lux: Option<MetricSummary>,
+    pub ppfd: Option<MetricSummary>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EnvironmentSnapshot {
+    pub temperature: Option<EnvironmentValue>,
+    pub humidity: Option<EnvironmentValue>,
+    pub lux: Option<EnvironmentValue>,
+    pub ppfd: Option<EnvironmentValue>,
+    pub latest_temperature_reading: Option<EnvironmentValue>,
+    pub latest_humidity_reading: Option<EnvironmentValue>,
+    pub latest_lux_reading: Option<EnvironmentValue>,
+    pub latest_ppfd_reading: Option<EnvironmentValue>,
+    pub daily: EnvironmentSummary,
+    pub weekly: EnvironmentSummary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnvironmentReadingInput {
+    pub plant_id: Option<i64>,
+    pub scope: EnvironmentScope,
+    pub source: EnvironmentSource,
+    pub observed_at: i64,
+    pub temperature_c: Option<f64>,
+    pub humidity_percent: Option<f64>,
+    pub lux: Option<f64>,
+    pub ppfd: Option<f64>,
+}
 #[derive(Clone, Debug)]
 pub struct Taxon {
     pub id: String,
@@ -126,6 +303,7 @@ pub struct Plant {
     pub soil: String,
     pub tags: String,
     pub notes: String,
+    pub environment: PlantEnvironment,
     pub schedules: Vec<Schedule>,
 }
 

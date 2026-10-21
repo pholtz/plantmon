@@ -17,6 +17,8 @@ journal entries, and other collection data are not copied into these files.
 
 ## Files
 
+- `requirements.toml`: reviewed exposure tiers and numeric environment targets used
+  by opt-in assessments.
 - `sources.toml`: reusable source metadata.
 - `taxa.toml`: species-level care, background, history, and peculiarities.
 - `families.toml`: broader botanical context.
@@ -26,6 +28,14 @@ Every document has a `schema_version`. Every profile identifies its `scope` and
 catalog `key`, and every fact has a stable ID, section, topic, paraphrased text,
 and one or more source IDs. Profiles carry a review date and content version.
 
+
+Environment requirements use only explicit structured values: a minimum/maximum
+five-level exposure, a bounded preferred Celsius range, and an optional humidity target
+(which may be lower-bounded). Every target has its own source IDs. The loader rejects
+unknown enum values or catalog keys, reversed/out-of-bounds ranges, missing citations,
+malformed dates, and duplicate subjects. Assessment code never derives targets from
+`catalog.tsv` light prose or uncited care notes. A care-group fallback is permitted only
+when `requirements.toml` contains a separately cited care-group target.
 Care groups are not taxonomic ranks. Broad labels such as `trees`, `flowering`,
 and `tropical foliage` deliberately avoid universal water or light
 prescriptions. Species-level guidance takes precedence over care-group and

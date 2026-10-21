@@ -6,10 +6,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::{
     catalog,
-    model::{DAY, MAX_INTERVAL, Maintenance, Plant, Schedule, TaskKind, Taxon},
-    settings::{CardSpacing, Settings, Theme},
+    model::{
+        DAY, EnvironmentReadingInput, EnvironmentScope, EnvironmentSnapshot, EnvironmentSource,
+        EnvironmentSummary, EnvironmentValue, EnvironmentValueSource, MAX_INTERVAL, Maintenance,
+        MetricSummary, Plant, PlantEnvironment, Schedule, SunExposure, TaskKind, Taxon,
+    },
+    settings::{CardSpacing, HomeEnvironment, Settings, TemperatureUnit, Theme},
 };
 
+const READING_FRESH_SECONDS: i64 = DAY;
 pub struct Database {
     conn: Connection,
 }
@@ -35,6 +40,28 @@ impl PlantInput {
     }
 }
 
+fn validate_home_environment(environment: HomeEnvironment) -> Result<()> {
+    if let Some(latitude) = environment.latitude
+        && (!latitude.is_finite() || !(-90.0..=90.0).contains(&latitude))
+    {
+        bail!("Approximate latitude must be between -90 and 90");
+    }
+    if let Some(temperature) = environment.baseline_temperature_c {
+        if !temperature.is_finite() || !(-100.0..=100.0).contains(&temperature) {
+            bail!("Baseline temperature is outside the supported range");
+        }
+        if environment.temperature_unit.is_none() {
+            bail!("Choose a preferred temperature unit when setting a temperature");
+        }
+    }
+    if let Some(humidity) = environment.baseline_humidity_percent
+        && (!humidity.is_finite() || !(0.0..=100.0).contains(&humidity))
+    {
+        bail!("Baseline humidity must be between 0 and 100%");
+    }
+    Ok(())
+}
+
 impl Database {
     pub fn memory() -> Result<Self> {
         Self::initialize(Connection::open_in_memory()?)
@@ -50,7 +77,7 @@ impl Database {
     fn initialize(mut conn: Connection) -> Result<Self> {
         conn.busy_timeout(Duration::from_secs(5))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 3 {
+        if version > 4 {
             bail!("This database needs a newer plantmon (schema {version})");
         }
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
@@ -80,6 +107,28 @@ impl Database {
                 occurred_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL, note TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS maintenance_lookup ON maintenance(plant_id, kind, occurred_at DESC);
+            CREATE TABLE IF NOT EXISTS plant_environment (
+                plant_id INTEGER PRIMARY KEY REFERENCES plants(id) ON DELETE CASCADE,
+                sun_exposure TEXT CHECK(sun_exposure IS NULL OR sun_exposure IN ('full_shade','mostly_shade','partial_sun','mostly_sun','full_sun')),
+                temperature_c REAL CHECK(temperature_c IS NULL OR temperature_c BETWEEN -100.0 AND 100.0),
+                humidity_percent REAL CHECK(humidity_percent IS NULL OR humidity_percent BETWEEN 0.0 AND 100.0)
+            );
+            CREATE TABLE IF NOT EXISTS environment_readings (
+                id INTEGER PRIMARY KEY,
+                plant_id INTEGER REFERENCES plants(id) ON DELETE CASCADE,
+                scope TEXT NOT NULL CHECK(scope IN ('home','plant')),
+                source TEXT NOT NULL CHECK(source IN ('manual','import','sensor')),
+                observed_at INTEGER NOT NULL,
+                recorded_at INTEGER NOT NULL,
+                temperature_c REAL CHECK(temperature_c IS NULL OR temperature_c BETWEEN -100.0 AND 100.0),
+                humidity_percent REAL CHECK(humidity_percent IS NULL OR humidity_percent BETWEEN 0.0 AND 100.0),
+                lux REAL CHECK(lux IS NULL OR lux >= 0.0),
+                ppfd REAL CHECK(ppfd IS NULL OR ppfd >= 0.0),
+                CHECK((scope = 'home' AND plant_id IS NULL) OR (scope = 'plant' AND plant_id IS NOT NULL)),
+                CHECK(temperature_c IS NOT NULL OR humidity_percent IS NOT NULL OR lux IS NOT NULL OR ppfd IS NOT NULL)
+            );
+            CREATE INDEX IF NOT EXISTS environment_readings_lookup
+                ON environment_readings(scope, plant_id, observed_at DESC, id DESC);
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         ")?;
         let has_display_order = {
@@ -95,7 +144,7 @@ impl Database {
                  UPDATE plants SET display_order = id;",
             )?;
         }
-        tx.execute_batch("PRAGMA user_version = 3;")?;
+        tx.execute_batch("PRAGMA user_version = 4;")?;
         for taxon in catalog::builtin()? {
             tx.execute("INSERT INTO taxa VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO NOTHING",
                 params![taxon.id, taxon.genus, taxon.species, taxon.designation, taxon.common,
@@ -114,7 +163,16 @@ impl Database {
                 })
                 .optional()?)
         };
-        Ok(Settings {
+        let get_number = |key: &str| -> Result<Option<f64>> {
+            get(key)?
+                .map(|value| {
+                    value
+                        .parse::<f64>()
+                        .with_context(|| format!("Invalid numeric setting {key}"))
+                })
+                .transpose()
+        };
+        let settings = Settings {
             theme: get("theme")?
                 .and_then(|value| Theme::parse(&value))
                 .unwrap_or_default(),
@@ -123,10 +181,22 @@ impl Database {
                 .and_then(|value| CardSpacing::parse(&value))
                 .unwrap_or_default(),
             manual_order: get("manual_order")?.is_some_and(|value| value == "true"),
-        })
+            environment_assessments_enabled: get("environment_assessments_enabled")?
+                .is_some_and(|value| value == "true"),
+            home_environment: HomeEnvironment {
+                latitude: get_number("environment_latitude")?,
+                temperature_unit: get("environment_temperature_unit")?
+                    .and_then(|value| TemperatureUnit::parse(&value)),
+                baseline_temperature_c: get_number("environment_baseline_temperature_c")?,
+                baseline_humidity_percent: get_number("environment_baseline_humidity_percent")?,
+            },
+        };
+        validate_home_environment(settings.home_environment)?;
+        Ok(settings)
     }
 
     pub fn save_settings(&mut self, settings: Settings) -> Result<()> {
+        validate_home_environment(settings.home_environment)?;
         let tx = self.conn.transaction()?;
         for (key, value) in [
             ("theme", settings.theme.key()),
@@ -147,8 +217,47 @@ impl Database {
                     "false"
                 },
             ),
+            (
+                "environment_assessments_enabled",
+                if settings.environment_assessments_enabled {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
         ] {
             tx.execute("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value])?;
+        }
+        let environment = settings.home_environment;
+        for (key, value) in [
+            (
+                "environment_latitude",
+                environment.latitude.map(|value| value.to_string()),
+            ),
+            (
+                "environment_temperature_unit",
+                environment
+                    .temperature_unit
+                    .map(|unit| unit.key().to_string()),
+            ),
+            (
+                "environment_baseline_temperature_c",
+                environment
+                    .baseline_temperature_c
+                    .map(|value| value.to_string()),
+            ),
+            (
+                "environment_baseline_humidity_percent",
+                environment
+                    .baseline_humidity_percent
+                    .map(|value| value.to_string()),
+            ),
+        ] {
+            if let Some(value) = value {
+                tx.execute("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value])?;
+            } else {
+                tx.execute("DELETE FROM settings WHERE key=?1", [key])?;
+            }
         }
         tx.commit()?;
         Ok(())
@@ -243,8 +352,10 @@ impl Database {
     pub fn plants(&self) -> Result<Vec<Plant>> {
         let taxa = self.taxa()?;
         let mut stmt = self.conn.prepare(
-            "SELECT id,taxon_id,nickname,location,acquired,pot,soil,tags,notes,display_order
-            FROM plants ORDER BY display_order,id",
+            "SELECT p.id,p.taxon_id,p.nickname,p.location,p.acquired,p.pot,p.soil,p.tags,p.notes,p.display_order,
+                    e.sun_exposure,e.temperature_c,e.humidity_percent
+             FROM plants p LEFT JOIN plant_environment e ON e.plant_id=p.id
+             ORDER BY p.display_order,p.id",
         )?;
         let mut plants = stmt
             .query_map([], |r| {
@@ -254,6 +365,10 @@ impl Database {
                     .find(|t| t.id == taxon_id)
                     .cloned()
                     .ok_or(rusqlite::Error::InvalidQuery)?;
+                let exposure = r
+                    .get::<_, Option<String>>(10)?
+                    .map(|value| SunExposure::parse(&value).ok_or(rusqlite::Error::InvalidQuery))
+                    .transpose()?;
                 Ok(Plant {
                     id: r.get(0)?,
                     display_order: r.get(9)?,
@@ -265,6 +380,11 @@ impl Database {
                     soil: r.get(6)?,
                     tags: r.get(7)?,
                     notes: r.get(8)?,
+                    environment: PlantEnvironment {
+                        exposure,
+                        temperature_c: r.get(11)?,
+                        humidity_percent: r.get(12)?,
+                    },
                     schedules: vec![],
                 })
             })?
@@ -321,6 +441,246 @@ impl Database {
                 })
             })?
             .collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn set_plant_environment(&self, plant: i64, environment: PlantEnvironment) -> Result<()> {
+        validate_plant_environment(environment)?;
+        if environment.is_empty() {
+            self.conn
+                .execute("DELETE FROM plant_environment WHERE plant_id=?1", [plant])?;
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO plant_environment (plant_id,sun_exposure,temperature_c,humidity_percent)
+             VALUES (?1,?2,?3,?4)
+             ON CONFLICT(plant_id) DO UPDATE SET
+                sun_exposure=excluded.sun_exposure,
+                temperature_c=excluded.temperature_c,
+                humidity_percent=excluded.humidity_percent",
+            params![
+                plant,
+                environment.exposure.map(SunExposure::key),
+                environment.temperature_c,
+                environment.humidity_percent
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn log_environment(&self, input: EnvironmentReadingInput, now: i64) -> Result<i64> {
+        validate_environment_reading(input, now)?;
+        self.conn.execute(
+            "INSERT INTO environment_readings
+                (plant_id,scope,source,observed_at,recorded_at,temperature_c,humidity_percent,lux,ppfd)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![
+                input.plant_id,
+                input.scope.key(),
+                input.source.key(),
+                input.observed_at,
+                now,
+                input.temperature_c,
+                input.humidity_percent,
+                input.lux,
+                input.ppfd
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn environment_summary(
+        &self,
+        scope: EnvironmentScope,
+        plant: Option<i64>,
+        now: i64,
+        days: u8,
+    ) -> Result<EnvironmentSummary> {
+        if !(1..=7).contains(&days) {
+            bail!("Environment summary must cover 1–7 days");
+        }
+        validate_scope(scope, plant)?;
+        let since = now.saturating_sub(i64::from(days) * DAY);
+        self.conn.query_row(
+            "SELECT
+                COUNT(temperature_c), MIN(temperature_c), MAX(temperature_c), AVG(temperature_c),
+                COUNT(humidity_percent), MIN(humidity_percent), MAX(humidity_percent), AVG(humidity_percent),
+                COUNT(lux), MIN(lux), MAX(lux), AVG(lux),
+                COUNT(ppfd), MIN(ppfd), MAX(ppfd), AVG(ppfd)
+             FROM environment_readings
+             WHERE scope=?1 AND plant_id IS ?2 AND observed_at BETWEEN ?3 AND ?4",
+            params![scope.key(), plant, since, now],
+            |row| {
+                Ok(EnvironmentSummary {
+                    temperature: summary_metric(row, 0)?,
+                    humidity: summary_metric(row, 4)?,
+                    lux: summary_metric(row, 8)?,
+                    ppfd: summary_metric(row, 12)?,
+                })
+            },
+        ).map_err(Into::into)
+    }
+
+    pub fn environment_snapshot(&self, plant: i64, now: i64) -> Result<EnvironmentSnapshot> {
+        let settings = self.settings()?;
+        let plant_environment = self
+            .conn
+            .query_row(
+                "SELECT sun_exposure,temperature_c,humidity_percent
+                 FROM plant_environment WHERE plant_id=?1",
+                [plant],
+                |row| {
+                    let exposure = row
+                        .get::<_, Option<String>>(0)?
+                        .map(|value| {
+                            SunExposure::parse(&value).ok_or(rusqlite::Error::InvalidQuery)
+                        })
+                        .transpose()?;
+                    Ok(PlantEnvironment {
+                        exposure,
+                        temperature_c: row.get(1)?,
+                        humidity_percent: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or_default();
+
+        let plant_temperature = self.latest_environment_value(
+            EnvironmentScope::Plant,
+            Some(plant),
+            "temperature_c",
+            now,
+        )?;
+        let home_temperature =
+            self.latest_environment_value(EnvironmentScope::Home, None, "temperature_c", now)?;
+        let plant_humidity = self.latest_environment_value(
+            EnvironmentScope::Plant,
+            Some(plant),
+            "humidity_percent",
+            now,
+        )?;
+        let home_humidity =
+            self.latest_environment_value(EnvironmentScope::Home, None, "humidity_percent", now)?;
+        let plant_lux =
+            self.latest_environment_value(EnvironmentScope::Plant, Some(plant), "lux", now)?;
+        let home_lux = self.latest_environment_value(EnvironmentScope::Home, None, "lux", now)?;
+        let plant_ppfd =
+            self.latest_environment_value(EnvironmentScope::Plant, Some(plant), "ppfd", now)?;
+        let home_ppfd = self.latest_environment_value(EnvironmentScope::Home, None, "ppfd", now)?;
+
+        let fresh = |value: Option<EnvironmentValue>| {
+            value.filter(|value| {
+                value
+                    .observed_at
+                    .is_some_and(|observed| now.saturating_sub(observed) <= READING_FRESH_SECONDS)
+            })
+        };
+        let plant_temperature_fresh = fresh(plant_temperature);
+        let home_temperature_fresh = fresh(home_temperature);
+        let plant_humidity_fresh = fresh(plant_humidity);
+        let home_humidity_fresh = fresh(home_humidity);
+        let plant_lux_fresh = fresh(plant_lux);
+        let home_lux_fresh = fresh(home_lux);
+        let plant_ppfd_fresh = fresh(plant_ppfd);
+        let home_ppfd_fresh = fresh(home_ppfd);
+
+        let plant_daily = self.environment_summary(EnvironmentScope::Plant, Some(plant), now, 1)?;
+        let home_daily = self.environment_summary(EnvironmentScope::Home, None, now, 1)?;
+        let plant_weekly =
+            self.environment_summary(EnvironmentScope::Plant, Some(plant), now, 7)?;
+        let home_weekly = self.environment_summary(EnvironmentScope::Home, None, now, 7)?;
+
+        Ok(EnvironmentSnapshot {
+            temperature: plant_temperature_fresh
+                .or_else(|| {
+                    plant_environment
+                        .temperature_c
+                        .map(|value| EnvironmentValue {
+                            value,
+                            scope: EnvironmentScope::Plant,
+                            source: EnvironmentValueSource::Override,
+                            observed_at: None,
+                        })
+                })
+                .or(home_temperature_fresh)
+                .or_else(|| {
+                    settings
+                        .home_environment
+                        .baseline_temperature_c
+                        .map(|value| EnvironmentValue {
+                            value,
+                            scope: EnvironmentScope::Home,
+                            source: EnvironmentValueSource::Baseline,
+                            observed_at: None,
+                        })
+                }),
+            humidity: plant_humidity_fresh
+                .or_else(|| {
+                    plant_environment
+                        .humidity_percent
+                        .map(|value| EnvironmentValue {
+                            value,
+                            scope: EnvironmentScope::Plant,
+                            source: EnvironmentValueSource::Override,
+                            observed_at: None,
+                        })
+                })
+                .or(home_humidity_fresh)
+                .or_else(|| {
+                    settings
+                        .home_environment
+                        .baseline_humidity_percent
+                        .map(|value| EnvironmentValue {
+                            value,
+                            scope: EnvironmentScope::Home,
+                            source: EnvironmentValueSource::Baseline,
+                            observed_at: None,
+                        })
+                }),
+            lux: plant_lux_fresh.or(home_lux_fresh),
+            ppfd: plant_ppfd_fresh.or(home_ppfd_fresh),
+            latest_temperature_reading: plant_temperature.or(home_temperature),
+            latest_humidity_reading: plant_humidity.or(home_humidity),
+            latest_lux_reading: plant_lux.or(home_lux),
+            latest_ppfd_reading: plant_ppfd.or(home_ppfd),
+            daily: merge_summaries(plant_daily, home_daily),
+            weekly: merge_summaries(plant_weekly, home_weekly),
+        })
+    }
+
+    fn latest_environment_value(
+        &self,
+        scope: EnvironmentScope,
+        plant: Option<i64>,
+        column: &str,
+        now: i64,
+    ) -> Result<Option<EnvironmentValue>> {
+        validate_scope(scope, plant)?;
+        if !matches!(
+            column,
+            "temperature_c" | "humidity_percent" | "lux" | "ppfd"
+        ) {
+            bail!("Unsupported environment metric");
+        }
+        let sql = format!(
+            "SELECT {column},source,observed_at FROM environment_readings
+             WHERE scope=?1 AND plant_id IS ?2 AND observed_at<=?3 AND {column} IS NOT NULL
+             ORDER BY observed_at DESC,id DESC LIMIT 1"
+        );
+        self.conn
+            .query_row(&sql, params![scope.key(), plant, now], |row| {
+                let source: String = row.get(1)?;
+                let source =
+                    EnvironmentSource::parse(&source).ok_or(rusqlite::Error::InvalidQuery)?;
+                Ok(EnvironmentValue {
+                    value: row.get(0)?,
+                    scope,
+                    source: EnvironmentValueSource::Reading(source),
+                    observed_at: Some(row.get(2)?),
+                })
+            })
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn set_intervals(&mut self, plant: i64, intervals: &[i64], now: i64) -> Result<()> {
@@ -380,6 +740,78 @@ impl Database {
             params![event, plant],
         )?;
         Ok(())
+    }
+}
+fn validate_plant_environment(environment: PlantEnvironment) -> Result<()> {
+    if let Some(temperature) = environment.temperature_c
+        && (!temperature.is_finite() || !(-100.0..=100.0).contains(&temperature))
+    {
+        bail!("Plant temperature override is outside the supported range");
+    }
+    if let Some(humidity) = environment.humidity_percent
+        && (!humidity.is_finite() || !(0.0..=100.0).contains(&humidity))
+    {
+        bail!("Plant humidity override must be between 0 and 100%");
+    }
+    Ok(())
+}
+
+fn validate_scope(scope: EnvironmentScope, plant: Option<i64>) -> Result<()> {
+    if matches!(scope, EnvironmentScope::Home) != plant.is_none() {
+        bail!("Home readings cannot have a plant; plant readings require one");
+    }
+    Ok(())
+}
+
+fn validate_environment_reading(input: EnvironmentReadingInput, now: i64) -> Result<()> {
+    validate_scope(input.scope, input.plant_id)?;
+    if input.observed_at > now {
+        bail!("Environment readings cannot be recorded in the future");
+    }
+    if input.temperature_c.is_none()
+        && input.humidity_percent.is_none()
+        && input.lux.is_none()
+        && input.ppfd.is_none()
+    {
+        bail!("Enter at least one environment metric");
+    }
+    validate_plant_environment(PlantEnvironment {
+        exposure: None,
+        temperature_c: input.temperature_c,
+        humidity_percent: input.humidity_percent,
+    })?;
+    for (label, value) in [("Lux", input.lux), ("PPFD", input.ppfd)] {
+        if let Some(value) = value
+            && (!value.is_finite() || value < 0.0)
+        {
+            bail!("{label} must be a non-negative number");
+        }
+    }
+    Ok(())
+}
+
+fn summary_metric(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+) -> rusqlite::Result<Option<MetricSummary>> {
+    let count = row.get::<_, i64>(offset)?;
+    if count == 0 {
+        return Ok(None);
+    }
+    Ok(Some(MetricSummary {
+        count: count as usize,
+        minimum: row.get(offset + 1)?,
+        maximum: row.get(offset + 2)?,
+        mean: row.get(offset + 3)?,
+    }))
+}
+
+fn merge_summaries(plant: EnvironmentSummary, home: EnvironmentSummary) -> EnvironmentSummary {
+    EnvironmentSummary {
+        temperature: plant.temperature.or(home.temperature),
+        humidity: plant.humidity.or(home.humidity),
+        lux: plant.lux.or(home.lux),
+        ppfd: plant.ppfd.or(home.ppfd),
     }
 }
 
@@ -460,6 +892,7 @@ mod tests {
                 display_artifacts: true,
                 card_spacing: CardSpacing::Compact,
                 manual_order: false,
+                ..Default::default()
             })?;
         }
         {
@@ -477,6 +910,7 @@ mod tests {
                     display_artifacts: true,
                     card_spacing: CardSpacing::Compact,
                     manual_order: false,
+                    ..Default::default()
                 }
             );
         }
@@ -503,10 +937,183 @@ mod tests {
         assert_eq!(
             db.conn
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            3
+            4
         );
         db.conn.execute_batch("PRAGMA user_version = 99;")?;
         assert!(Database::initialize(db.conn).is_err());
+        Ok(())
+    }
+    #[test]
+    fn schema_three_migrates_environment_tables_additively_and_optional_fields_clear() -> Result<()>
+    {
+        let mut old = Database::memory()?;
+        let taxon = old.taxa()?.remove(0);
+        let id = old.add_plant(&taxon, &PlantInput::default(), 100 * DAY)?;
+        old.log(
+            id,
+            TaskKind::Water,
+            99 * DAY,
+            "before schema four",
+            100 * DAY,
+        )?;
+        old.conn.execute_batch(
+            "DROP TABLE environment_readings;
+             DROP TABLE plant_environment;
+             PRAGMA user_version = 3;",
+        )?;
+
+        let mut db = Database::initialize(old.conn)?;
+        assert_eq!(db.plants()?[0].water().last_completed, Some(99 * DAY));
+        assert_eq!(
+            db.conn
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
+            4
+        );
+
+        let mut settings = db.settings()?;
+        settings.environment_assessments_enabled = true;
+        settings.home_environment = HomeEnvironment {
+            latitude: Some(34.1),
+            temperature_unit: Some(TemperatureUnit::Fahrenheit),
+            baseline_temperature_c: Some(22.0),
+            baseline_humidity_percent: Some(55.0),
+        };
+        db.save_settings(settings)?;
+        assert_eq!(db.settings()?, settings);
+        settings.environment_assessments_enabled = false;
+        settings.home_environment = HomeEnvironment::default();
+        db.save_settings(settings)?;
+        assert_eq!(db.settings()?.home_environment, HomeEnvironment::default());
+
+        db.set_plant_environment(
+            id,
+            PlantEnvironment {
+                exposure: Some(SunExposure::PartialSun),
+                temperature_c: Some(21.0),
+                humidity_percent: Some(60.0),
+            },
+        )?;
+        assert_eq!(
+            db.plants()?[0].environment.exposure,
+            Some(SunExposure::PartialSun)
+        );
+        db.set_plant_environment(id, PlantEnvironment::default())?;
+        assert!(db.plants()?[0].environment.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn readings_enforce_scope_freshness_precedence_summaries_and_deletion() -> Result<()> {
+        let mut db = Database::memory()?;
+        let taxon = db.taxa()?.remove(0);
+        let id = db.add_plant(&taxon, &PlantInput::default(), 10 * DAY)?;
+        let mut settings = db.settings()?;
+        settings.home_environment = HomeEnvironment {
+            temperature_unit: Some(TemperatureUnit::Celsius),
+            baseline_temperature_c: Some(19.0),
+            baseline_humidity_percent: Some(45.0),
+            ..Default::default()
+        };
+        db.save_settings(settings)?;
+        db.set_plant_environment(
+            id,
+            PlantEnvironment {
+                temperature_c: Some(21.0),
+                ..Default::default()
+            },
+        )?;
+        let now = 20 * DAY;
+        db.log_environment(
+            EnvironmentReadingInput {
+                plant_id: None,
+                scope: EnvironmentScope::Home,
+                source: EnvironmentSource::Import,
+                observed_at: now - 60,
+                temperature_c: Some(23.0),
+                humidity_percent: None,
+                lux: Some(500.0),
+                ppfd: None,
+            },
+            now,
+        )?;
+        db.log_environment(
+            EnvironmentReadingInput {
+                plant_id: Some(id),
+                scope: EnvironmentScope::Plant,
+                source: EnvironmentSource::Manual,
+                observed_at: now - DAY - 1,
+                temperature_c: Some(27.0),
+                humidity_percent: None,
+                lux: None,
+                ppfd: Some(80.0),
+            },
+            now,
+        )?;
+        for (age, humidity, lux) in [(120, 60.0, 700.0), (30, 62.0, 900.0)] {
+            db.log_environment(
+                EnvironmentReadingInput {
+                    plant_id: Some(id),
+                    scope: EnvironmentScope::Plant,
+                    source: EnvironmentSource::Manual,
+                    observed_at: now - age,
+                    temperature_c: None,
+                    humidity_percent: Some(humidity),
+                    lux: Some(lux),
+                    ppfd: None,
+                },
+                now,
+            )?;
+        }
+
+        let snapshot = db.environment_snapshot(id, now)?;
+        assert_eq!(snapshot.temperature.map(|value| value.value), Some(21.0));
+        assert_eq!(
+            snapshot.latest_temperature_reading.map(|value| value.value),
+            Some(27.0)
+        );
+        assert_eq!(snapshot.humidity.map(|value| value.value), Some(62.0));
+        assert_eq!(snapshot.lux.map(|value| value.value), Some(900.0));
+        assert!(snapshot.ppfd.is_none());
+        assert_eq!(
+            snapshot.latest_ppfd_reading.map(|value| value.value),
+            Some(80.0)
+        );
+        assert_eq!(snapshot.daily.humidity.unwrap().count, 2);
+        assert_eq!(snapshot.daily.lux.unwrap().count, 2);
+        assert!(
+            db.environment_summary(EnvironmentScope::Plant, Some(id), now, 8)
+                .is_err()
+        );
+        assert!(
+            db.log_environment(
+                EnvironmentReadingInput {
+                    plant_id: Some(id),
+                    scope: EnvironmentScope::Plant,
+                    source: EnvironmentSource::Manual,
+                    observed_at: now,
+                    temperature_c: None,
+                    humidity_percent: None,
+                    lux: None,
+                    ppfd: None,
+                },
+                now,
+            )
+            .is_err()
+        );
+
+        db.remove_plant(id)?;
+        let plant_readings: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM environment_readings WHERE scope='plant'",
+            [],
+            |row| row.get(0),
+        )?;
+        let home_readings: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM environment_readings WHERE scope='home'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(plant_readings, 0);
+        assert_eq!(home_readings, 1);
         Ok(())
     }
 

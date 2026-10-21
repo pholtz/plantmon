@@ -1,8 +1,10 @@
 use crate::{
-    app::{App, ConfirmAction, Form, HelpTab, Mode},
+    app::{App, CatalogPurpose, ConfirmAction, Form, HelpTab, Mode},
     art,
-    model::{self, Plant},
-    settings::{CardSpacing, Palette, Settings},
+    health::{self, MetricAssessment, Status},
+    knowledge::NumericTarget,
+    model::{self, EnvironmentValue, MetricSummary, Plant},
+    settings::{CardSpacing, Palette, Settings, TemperatureUnit},
 };
 use ratatui::{
     Frame,
@@ -144,7 +146,11 @@ fn modal(frame: &mut Frame, app: &App, area: Rect, mode: &Mode) {
             selected,
             before_move,
         } => reorder(frame, app, area, order, *selected, before_move.is_some()),
-        Mode::Catalog { query, selected } => catalog(frame, app, area, query, *selected),
+        Mode::Catalog {
+            query,
+            selected,
+            purpose,
+        } => catalog(frame, app, area, query, *selected, *purpose),
         Mode::Form(form) => form_view(frame, app, area, form),
     }
 }
@@ -572,6 +578,11 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
         Line::raw(""),
         Line::raw(format!("Notes: {}", blank(&plant.notes))),
     ]);
+    let environment = environment_lines(app, plant, colors);
+    if !environment.is_empty() {
+        identity.push(Line::raw(""));
+        identity.extend(environment);
+    }
     let mut care = vec![
         Line::from(Span::styled(
             "CARE CALENDAR",
@@ -705,15 +716,368 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 }
+fn environment_lines(app: &App, plant: &Plant, colors: Palette) -> Vec<Line<'static>> {
+    let Some(snapshot) = app.environments.get(&plant.id) else {
+        return vec![];
+    };
+    let home = app.settings.home_environment;
+    let has_reading = snapshot.latest_temperature_reading.is_some()
+        || snapshot.latest_humidity_reading.is_some()
+        || snapshot.latest_lux_reading.is_some()
+        || snapshot.latest_ppfd_reading.is_some();
+    let has_config = !plant.environment.is_empty()
+        || home.latitude.is_some()
+        || home.baseline_temperature_c.is_some()
+        || home.baseline_humidity_percent.is_some();
+    if !has_reading && !has_config {
+        return vec![];
+    }
 
-fn catalog(frame: &mut Frame, app: &App, area: Rect, query: &str, selected: usize) {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "ENVIRONMENT",
+            Style::default()
+                .fg(colors.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "Optional local inputs. Light fit is a rough estimate, never measured plant light.",
+            Style::default().fg(colors.muted),
+        )),
+    ];
+    if let Some(latitude) = home.latitude {
+        let daylight = chrono::DateTime::from_timestamp(app.now, 0)
+            .map(|date| date.with_timezone(&chrono::Local).date_naive())
+            .and_then(|date| crate::environment::daylight_hours(latitude, date));
+        lines.push(Line::raw(match daylight {
+            Some(hours) => format!(
+                "Approximate latitude: {latitude:+.1}° · estimated daylight today: {hours:.1}h"
+            ),
+            None => format!("Approximate latitude: {latitude:+.1}°"),
+        }));
+    }
+    if let Some(unit) = home.temperature_unit {
+        lines.push(Line::raw(format!(
+            "Preferred temperature unit: {}",
+            unit.label()
+        )));
+    }
+    if let Some(exposure) = plant.environment.exposure {
+        lines.push(Line::raw(format!(
+            "Explicit exposure: {} · plant setting",
+            exposure.label()
+        )));
+    }
+    if let Some(value) = home.baseline_temperature_c {
+        lines.push(Line::raw(format!(
+            "Home baseline temperature: {}",
+            temperature(value, home.temperature_unit)
+        )));
+    }
+    if let Some(value) = plant.environment.temperature_c {
+        lines.push(Line::raw(format!(
+            "Plant temperature override: {}",
+            temperature(value, home.temperature_unit)
+        )));
+    }
+    if let Some(value) = home.baseline_humidity_percent {
+        lines.push(Line::raw(format!("Home baseline humidity: {value:.0}%")));
+    }
+    if let Some(value) = plant.environment.humidity_percent {
+        lines.push(Line::raw(format!("Plant humidity override: {value:.0}%")));
+    }
+
+    push_observation(
+        &mut lines,
+        "Temperature snapshot",
+        snapshot.latest_temperature_reading,
+        snapshot
+            .latest_temperature_reading
+            .map(|value| temperature(value.value, home.temperature_unit)),
+        app.now,
+        colors,
+        false,
+    );
+    push_observation(
+        &mut lines,
+        "Humidity snapshot",
+        snapshot.latest_humidity_reading,
+        snapshot
+            .latest_humidity_reading
+            .map(|value| format!("{:.0}%", value.value)),
+        app.now,
+        colors,
+        false,
+    );
+    push_observation(
+        &mut lines,
+        "Illuminance snapshot",
+        snapshot.latest_lux_reading,
+        snapshot
+            .latest_lux_reading
+            .map(|value| format!("{:.0} lux", value.value)),
+        app.now,
+        colors,
+        true,
+    );
+    push_observation(
+        &mut lines,
+        "PPFD snapshot (no DLI)",
+        snapshot.latest_ppfd_reading,
+        snapshot
+            .latest_ppfd_reading
+            .map(|value| format!("{:.1} µmol/m²/s", value.value)),
+        app.now,
+        colors,
+        true,
+    );
+    push_summary(
+        &mut lines,
+        "24h",
+        snapshot.daily,
+        home.temperature_unit,
+        colors,
+    );
+    push_summary(
+        &mut lines,
+        "7d",
+        snapshot.weekly,
+        home.temperature_unit,
+        colors,
+    );
+
+    let assessment = health::assess(
+        app.settings.environment_assessments_enabled,
+        app.requirements.get(&plant.taxon.id),
+        plant.environment.exposure,
+        snapshot,
+        app.now,
+    );
+    let Some(assessment) = assessment else {
+        lines.push(Line::from(Span::styled(
+            "Estimated assessments are disabled; saved inputs remain available.",
+            Style::default().fg(colors.muted),
+        )));
+        return lines;
+    };
+    if !assessment.requirements_available {
+        lines.push(Line::from(Span::styled(
+            "Assessment: unknown · source-backed targets are unavailable for this taxon.",
+            Style::default().fg(colors.muted),
+        )));
+        return lines;
+    }
+    let requirements = app
+        .requirements
+        .get(&plant.taxon.id)
+        .expect("assessment requirements were available");
+    lines.push(Line::from(Span::styled(
+        format!(
+            "Sourced targets · reviewed {} · content v{}{}",
+            requirements.reviewed_on,
+            requirements.content_version,
+            requirements
+                .fallback_group
+                .as_ref()
+                .map(|group| format!(" · care-group fallback: {group}"))
+                .unwrap_or_default()
+        ),
+        Style::default().fg(colors.muted),
+    )));
+    push_assessment(
+        &mut lines,
+        "Rough light estimate",
+        &assessment.light,
+        format!(
+            "{}–{} [{}]",
+            requirements.exposure.minimum.label(),
+            requirements.exposure.maximum.label(),
+            requirements.exposure.source_ids.join(", ")
+        ),
+        colors,
+    );
+    push_assessment(
+        &mut lines,
+        "Temperature",
+        &assessment.temperature,
+        format!(
+            "{} [{}]",
+            numeric_target(&requirements.temperature_c, home.temperature_unit, true),
+            requirements.temperature_c.source_ids.join(", ")
+        ),
+        colors,
+    );
+    let humidity_target = requirements
+        .humidity_percent
+        .as_ref()
+        .map(|target| {
+            format!(
+                "{} [{}]",
+                numeric_target(target, home.temperature_unit, false),
+                target.source_ids.join(", ")
+            )
+        })
+        .unwrap_or_else(|| "not available".into());
+    push_assessment(
+        &mut lines,
+        "Humidity",
+        &assessment.humidity,
+        humidity_target,
+        colors,
+    );
+    lines
+}
+
+fn push_observation(
+    lines: &mut Vec<Line<'static>>,
+    label: &str,
+    input: Option<EnvironmentValue>,
+    displayed: Option<String>,
+    now: i64,
+    colors: Palette,
+    always_snapshot: bool,
+) {
+    let (Some(input), Some(displayed)) = (input, displayed) else {
+        return;
+    };
+    let stale = input
+        .observed_at
+        .is_some_and(|observed| now.saturating_sub(observed) > model::DAY);
+    let context = health::value_context(input, now);
+    let qualifier = if stale {
+        " · stale; excluded from assessment"
+    } else if always_snapshot {
+        " · snapshot"
+    } else {
+        ""
+    };
+    lines.push(Line::from(Span::styled(
+        format!("{label}: {displayed} · {context}{qualifier}"),
+        Style::default().fg(if stale { colors.muted } else { colors.text }),
+    )));
+}
+
+fn push_summary(
+    lines: &mut Vec<Line<'static>>,
+    window: &str,
+    summary: crate::model::EnvironmentSummary,
+    unit: Option<TemperatureUnit>,
+    colors: Palette,
+) {
+    let mut metrics = Vec::new();
+    if let Some(metric) = summary.temperature.filter(|metric| metric.count > 1) {
+        metrics.push(format!(
+            "temperature {} avg (n={})",
+            temperature(metric.mean, unit),
+            metric.count
+        ));
+    }
+    if let Some(metric) = summary.humidity.filter(|metric| metric.count > 1) {
+        metrics.push(format!(
+            "humidity {:.0}% avg (n={})",
+            metric.mean, metric.count
+        ));
+    }
+    if let Some(metric) = summary.lux.filter(|metric| metric.count > 1) {
+        metrics.push(summary_metric("illuminance", metric, "lux"));
+    }
+    if let Some(metric) = summary.ppfd.filter(|metric| metric.count > 1) {
+        metrics.push(summary_metric("PPFD", metric, "µmol/m²/s"));
+    }
+    if !metrics.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("{window} observations: {}", metrics.join(" · ")),
+            Style::default().fg(colors.muted),
+        )));
+    }
+}
+
+fn summary_metric(label: &str, metric: MetricSummary, unit: &str) -> String {
+    format!("{label} {:.1} {unit} avg (n={})", metric.mean, metric.count)
+}
+
+fn push_assessment(
+    lines: &mut Vec<Line<'static>>,
+    label: &str,
+    assessment: &MetricAssessment,
+    target: String,
+    colors: Palette,
+) {
+    let color = match assessment.status {
+        Status::WithinTarget => colors.accent,
+        Status::BelowTarget | Status::AboveTarget => colors.warning,
+        Status::Unknown => colors.muted,
+    };
+    lines.push(Line::from(vec![
+        Span::raw(format!("{label}: ")),
+        Span::styled(assessment.status.label(), Style::default().fg(color)),
+        Span::styled(
+            format!(" · sourced target {target}"),
+            Style::default().fg(colors.muted),
+        ),
+    ]));
+    if let Some(recommendation) = &assessment.recommendation {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  {}{}",
+                assessment
+                    .input_context
+                    .as_ref()
+                    .map(|context| format!("{context} · "))
+                    .unwrap_or_default(),
+                recommendation
+            ),
+            Style::default().fg(color),
+        )));
+    }
+}
+
+fn temperature(celsius: f64, unit: Option<TemperatureUnit>) -> String {
+    let unit = unit.unwrap_or(TemperatureUnit::Celsius);
+    format!("{:.1}{}", unit.convert_from_celsius(celsius), unit.symbol())
+}
+
+fn numeric_target(
+    target: &NumericTarget,
+    unit: Option<TemperatureUnit>,
+    is_temperature: bool,
+) -> String {
+    let value = |value: f64| {
+        if is_temperature {
+            temperature(value, unit)
+        } else {
+            format!("{value:.0}%")
+        }
+    };
+    match target.maximum {
+        Some(maximum) => format!("{}–{}", value(target.minimum), value(maximum)),
+        None => format!("at least {}", value(target.minimum)),
+    }
+}
+
+fn catalog(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    query: &str,
+    selected: usize,
+    purpose: CatalogPurpose,
+) {
     let colors = app.settings.theme.palette();
-    let inner = popup(frame, area, 106, 38, " Plant catalog ", colors);
+    let adding = purpose == CatalogPurpose::AddPlant;
+    let inner = popup(
+        frame,
+        area,
+        106,
+        38,
+        &format!(" {} ", crate::catalog::CATALOG_TITLE),
+        colors,
+    );
     let parts = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(1),
         Constraint::Length(4),
-        Constraint::Length(1),
+        Constraint::Length(u16::from(adding)),
     ])
     .split(inner);
     let matches = app.catalog_matches(query);
@@ -757,24 +1121,26 @@ fn catalog(frame: &mut Frame, app: &App, area: Rect, query: &str, selected: usiz
             parts[2],
         );
     }
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            format!(
-                "{} Custom plant type…",
-                if selected == matches.len() {
-                    "›"
+    if adding {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(
+                    "{} Custom plant type…",
+                    if selected == matches.len() {
+                        "›"
+                    } else {
+                        " "
+                    }
+                ),
+                Style::default().fg(if selected == matches.len() {
+                    colors.accent
                 } else {
-                    " "
-                }
-            ),
-            Style::default().fg(if selected == matches.len() {
-                colors.accent
-            } else {
-                colors.muted
-            }),
-        )),
-        parts[3],
-    );
+                    colors.muted
+                }),
+            )),
+            parts[3],
+        );
+    }
 }
 
 fn help(
@@ -867,6 +1233,22 @@ fn settings_view(frame: &mut Frame, area: Rect, settings: Settings, selected: us
             "Card spacing".to_string(),
             format!("‹ {} ›", settings.card_spacing.label()),
         ]),
+        Row::new([
+            "Environment setup".to_string(),
+            format!(
+                "[{}] {} · Enter to configure",
+                if settings.environment_assessments_enabled {
+                    "✓"
+                } else {
+                    " "
+                },
+                if settings.home_environment.is_empty() {
+                    "No profile"
+                } else {
+                    "Profile saved locally"
+                }
+            ),
+        ]),
     ]
     .map(|row| row.height(if compact { 1 } else { 2 }));
     let table = Table::new(
@@ -896,8 +1278,11 @@ fn settings_view(frame: &mut Frame, area: Rect, settings: Settings, selected: us
         1 => {
             "Full sun sparkles often; part sun sparkles occasionally. Shade and nighttime show a small moon. Explicit sun/shade in a plant's location overrides catalog light preferences.\nDaylight is estimated as 6am–6pm local time, not weather or astronomical sunrise."
         }
-        _ => {
+        2 => {
             "Relaxed adds breathing room between card details when height allows. Compact targets shorter rows, hides artwork as needed, and can fit more plants on one page. Both adapt to the terminal size."
+        }
+        _ => {
+            "Optional environment data stays in SQLite. Enter opens setup for approximate latitude, preferred unit, and baselines. Assessments are off by default and can be disabled without deleting inputs. No address, geocoding, weather, or network calls are used."
         }
     };
     frame.render_widget(
@@ -1154,6 +1539,8 @@ mod tests {
                 (KeyCode::Enter, "Specimen help"),
                 (KeyCode::Char('a'), "Plant catalog help"),
                 (KeyCode::Esc, "Specimen help"),
+                (KeyCode::Char('c'), "Catalog help"),
+                (KeyCode::Esc, "Specimen help"),
                 (KeyCode::Char('m'), "Maintenance help"),
                 (KeyCode::Esc, "Specimen help"),
                 (KeyCode::Char('t'), "Care intervals help"),
@@ -1186,6 +1573,25 @@ mod tests {
                 app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_browser_uses_the_default_title_without_add_controls() -> anyhow::Result<()> {
+        let mut app = App::new(crate::demo_database()?)?;
+        app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24))?;
+        terminal.draw(|frame| draw(frame, &mut app))?;
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains(crate::catalog::CATALOG_TITLE));
+        assert!(!text.contains("Field Guide"));
+        assert!(!text.contains("Custom plant type"));
         Ok(())
     }
 
@@ -1286,6 +1692,112 @@ mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn environment_detail_respects_opt_in_and_unsupported_taxa_without_changing_cards()
+    -> anyhow::Result<()> {
+        use crate::{
+            db::PlantInput,
+            model::{PlantEnvironment, SunExposure},
+            settings::{HomeEnvironment, TemperatureUnit},
+        };
+
+        let mut db = crate::db::Database::memory()?;
+        let taxon = db
+            .taxa()?
+            .into_iter()
+            .find(|taxon| taxon.id == "Goeppertia warszewiczii")
+            .unwrap();
+        let id = db.add_plant(&taxon, &PlantInput::default(), crate::model::now())?;
+        db.set_plant_environment(
+            id,
+            PlantEnvironment {
+                exposure: Some(SunExposure::PartialSun),
+                humidity_percent: Some(65.0),
+                ..Default::default()
+            },
+        )?;
+        let mut settings = db.settings()?;
+        settings.home_environment = HomeEnvironment {
+            temperature_unit: Some(TemperatureUnit::Celsius),
+            baseline_temperature_c: Some(22.0),
+            ..Default::default()
+        };
+        db.save_settings(settings)?;
+        let mut app = App::new(db)?;
+        app.detail = true;
+        let mut terminal = Terminal::new(TestBackend::new(120, 60))?;
+        terminal.draw(|frame| draw(frame, &mut app))?;
+        let disabled: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(disabled.contains("ENVIRONMENT"));
+        assert!(disabled.contains("assessments are disabled"));
+        assert!(!disabled.contains("within target"));
+
+        settings.environment_assessments_enabled = true;
+        app.db.save_settings(settings)?;
+        app.reload()?;
+        terminal.draw(|frame| draw(frame, &mut app))?;
+        let enabled: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(enabled.contains("within target"));
+        assert!(enabled.contains("Sourced targets"));
+
+        let mut unsupported_db = crate::db::Database::memory()?;
+        let unsupported = unsupported_db
+            .taxa()?
+            .into_iter()
+            .find(|taxon| taxon.id == "Monstera deliciosa")
+            .unwrap();
+        let unsupported_id =
+            unsupported_db.add_plant(&unsupported, &PlantInput::default(), crate::model::now())?;
+        unsupported_db.set_plant_environment(
+            unsupported_id,
+            PlantEnvironment {
+                exposure: Some(SunExposure::PartialSun),
+                ..Default::default()
+            },
+        )?;
+        let mut unsupported_settings = unsupported_db.settings()?;
+        unsupported_settings.environment_assessments_enabled = true;
+        unsupported_db.save_settings(unsupported_settings)?;
+        let mut unsupported_app = App::new(unsupported_db)?;
+        unsupported_app.detail = true;
+        terminal.draw(|frame| draw(frame, &mut unsupported_app))?;
+        let unsupported_text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            unsupported_text.contains("source-backed") && unsupported_text.contains("unavailable")
+        );
+
+        unsupported_app.detail = false;
+        let mut compact = Terminal::new(TestBackend::new(38, 12))?;
+        compact.draw(|frame| draw(frame, &mut unsupported_app))?;
+        let card: String = compact
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(!card.contains("ENVIRONMENT"));
         Ok(())
     }
 }

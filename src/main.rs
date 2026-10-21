@@ -3,6 +3,7 @@ mod art;
 mod catalog;
 mod db;
 mod environment;
+mod health;
 mod help;
 mod knowledge;
 mod model;

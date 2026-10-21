@@ -143,3 +143,27 @@ organization = "University of Minnesota Extension"
 url = "https://extension.umn.edu/yard-and-garden-news/watering-houseplants"
 kind = "university_extension"
 accessed_on = "2026-10-19"
+
+[[source]]
+id = "sdsu-spider-plants"
+title = "Spider Plants: Houseplant How-To"
+organization = "South Dakota State University Extension"
+url = "https://extension.sdstate.edu/spider-plants-houseplant-how"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "uga-growing-indoor-plants"
+title = "Growing Indoor Plants with Success"
+organization = "University of Georgia Cooperative Extension"
+url = "https://fieldreport.caes.uga.edu/publications/B1318/growing-indoor-plants-with-success/"
+kind = "university_extension"
+accessed_on = "2026-10-19"
+
+[[source]]
+id = "csu-zebra-plant"
+title = "Zebra Plant"
+organization = "Colorado State University Extension PlantTalk"
+url = "https://planttalk.colostate.edu/topics/houseplants/1340-zebra-plant/"
+kind = "university_extension"
+accessed_on = "2026-10-19"

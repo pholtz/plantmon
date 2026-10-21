@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{FormAction, Mode};
+use crate::app::{CatalogPurpose, FormAction, Mode};
 
 pub struct Command {
     pub keys: &'static str,
@@ -37,6 +37,7 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
         Mode::Browse => {
             let mut commands = vec![
                 command("a", "Add a plant", Char('a')),
+                command("c", crate::catalog::CATALOG_TITLE, Char('c')),
                 command("/", "Find plants", Char('/')),
                 command("g", "Change grouping", Char('g')),
                 command("d", "Toggle due-only view", Char('d')),
@@ -52,6 +53,8 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
                     command("i", "Record inspection now", Char('i')),
                     command("t", "Adjust care intervals", Char('t')),
                     command("e", "Edit plant details", Char('e')),
+                    command("E", "Configure plant environment", Char('E')),
+                    command("v", "Log environment snapshot", Char('v')),
                     command("u", "Undo last-entered care", Char('u')),
                     command("D", "Delete plant", Char('D')),
                 ]);
@@ -103,17 +106,47 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
             ],
             navigation: "Up / Down or j / k: select a row, or move a picked-up plant. Home / End: first / last. PgUp / PgDn: move by ten.",
         },
-        Mode::Catalog { .. } => Page {
-            title: "Plant catalog help",
-            summary: "Find a species, cultivar, or hybrid by botanical name, common name, family, or care group. The custom type option is always available below the results.".into(),
-            commands: vec![
-                command("Enter", "Choose selected type", Enter),
-                control("Ctrl-N", "Create custom plant type", 'n'),
+        Mode::Catalog { purpose, .. } => {
+            let adding = *purpose == CatalogPurpose::AddPlant;
+            let mut commands = vec![];
+            if adding {
+                commands.extend([
+                    command("Enter", "Choose selected type", Enter),
+                    control("Ctrl-N", "Create custom plant type", 'n'),
+                ]);
+            }
+            commands.extend([
                 control("Ctrl-U", "Clear search", 'u'),
-                command("Esc", "Cancel adding a plant", Esc),
-            ],
-            navigation: "Type to search; q is text here. Up / Down: select a result or custom type. PgUp / PgDn: page results. Home / End: first result / custom type.",
-        },
+                command(
+                    "Esc",
+                    if adding {
+                        "Cancel adding a plant"
+                    } else {
+                        "Return to greenhouse"
+                    },
+                    Esc,
+                ),
+            ]);
+            Page {
+                title: if adding {
+                    "Plant catalog help"
+                } else {
+                    "Catalog help"
+                },
+                summary: if adding {
+                    "Find a species, cultivar, or hybrid by botanical name, common name, family, or care group. The custom type option is always available below the results."
+                } else {
+                    "Browse the bundled plant catalog by botanical name, common name, family, or care group."
+                }
+                .into(),
+                commands,
+                navigation: if adding {
+                    "Type to search; q is text here. Up / Down: select a result or custom type. PgUp / PgDn: page results. Home / End: first result / custom type."
+                } else {
+                    "Type to search; q is text here. Up / Down: select a result. PgUp / PgDn: page results. Home / End: first / last result."
+                },
+            }
+        }
         Mode::Search { .. } => Page {
             title: "Find plants help",
             summary: "Filter your collection by botanical or common name, family, care group, location, or personal tags. An empty search shows all plants.".into(),
@@ -131,9 +164,12 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
                 FormAction::Schedules(_) => "Care intervals help",
                 FormAction::Log { .. } => "Maintenance help",
                 FormAction::Custom => "Custom plant type help",
+                FormAction::EnvironmentSettings => "Environment setup help",
+                FormAction::PlantEnvironment(_) => "Plant environment help",
+                FormAction::LogEnvironment(_) => "Environment log help",
             };
             let mut summary = form.hint.clone();
-            if matches!(form.action, FormAction::Log { .. }) {
+            if matches!(form.action, FormAction::Log { .. } | FormAction::LogEnvironment(_)) {
                 summary.push_str(" Dates: now, yesterday, 2d, 12h, 30m, YYYY-MM-DD, or YYYY-MM-DD HH:MM. Future times are rejected.");
             }
             let mut commands = vec![control("Ctrl-S", "Save", 's')];

@@ -14,6 +14,67 @@ const SOURCES: &str = include_str!("../data/knowledge/sources.toml");
 const TAXA: &str = include_str!("../data/knowledge/taxa.toml");
 const FAMILIES: &str = include_str!("../data/knowledge/families.toml");
 const CARE_GROUPS: &str = include_str!("../data/knowledge/care_groups.toml");
+const REQUIREMENTS: &str = include_str!("../data/knowledge/requirements.toml");
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequirementDocument {
+    schema_version: u32,
+    requirement: Vec<RawRequirement>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequirement {
+    scope: Scope,
+    key: String,
+    reviewed_on: String,
+    content_version: u32,
+    exposure: RawExposureTarget,
+    temperature_c: RawNumericTarget,
+    humidity_percent: Option<RawNumericTarget>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawExposureTarget {
+    minimum: String,
+    maximum: String,
+    source_ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawNumericTarget {
+    minimum: f64,
+    maximum: Option<f64>,
+    source_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExposureTarget {
+    pub minimum: crate::model::SunExposure,
+    pub maximum: crate::model::SunExposure,
+    pub source_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NumericTarget {
+    pub minimum: f64,
+    pub maximum: Option<f64>,
+    pub source_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnvironmentalRequirements {
+    pub key: String,
+    pub exposure: ExposureTarget,
+    pub temperature_c: NumericTarget,
+    pub humidity_percent: Option<NumericTarget>,
+    pub reviewed_on: String,
+    pub content_version: u32,
+    pub fallback_group: Option<String>,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -187,6 +248,164 @@ pub fn render(query: &str) -> Result<String> {
     }
 
     Ok(output)
+}
+
+pub fn requirements_for(taxon: &crate::model::Taxon) -> Result<Option<EnvironmentalRequirements>> {
+    let requirements = bundled_requirements()?;
+    if let Some((_, requirement)) = requirements
+        .iter()
+        .find(|(scope, requirement)| *scope == Scope::Taxon && requirement.key == taxon.id)
+    {
+        return Ok(Some(requirement.clone()));
+    }
+    for group in taxon.groups.split(',').map(str::trim) {
+        if let Some((_, requirement)) = requirements
+            .iter()
+            .find(|(scope, requirement)| *scope == Scope::CareGroup && requirement.key == group)
+        {
+            let mut requirement = requirement.clone();
+            requirement.fallback_group = Some(group.to_string());
+            return Ok(Some(requirement));
+        }
+    }
+    Ok(None)
+}
+
+fn bundled_requirements() -> Result<Vec<(Scope, EnvironmentalRequirements)>> {
+    let knowledge = bundled()?;
+    let source_ids = knowledge
+        .sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect::<HashSet<_>>();
+    let document: RequirementDocument =
+        toml::from_str(REQUIREMENTS).context("Parse data/knowledge/requirements.toml")?;
+    ensure!(
+        document.schema_version == SCHEMA_VERSION,
+        "Unsupported requirement schema {}",
+        document.schema_version
+    );
+
+    let taxa = catalog::builtin()?;
+    let known_taxa = taxa
+        .iter()
+        .map(|taxon| taxon.id.as_str())
+        .collect::<HashSet<_>>();
+    let known_groups = taxa
+        .iter()
+        .flat_map(|taxon| taxon.groups.split(',').map(str::trim))
+        .collect::<HashSet<_>>();
+    let mut keys = HashSet::new();
+    let mut requirements = Vec::new();
+    for raw in document.requirement {
+        ensure!(
+            matches!(raw.scope, Scope::Taxon | Scope::CareGroup),
+            "Environmental requirements support taxon or care-group scopes only: {}",
+            raw.key
+        );
+        ensure!(
+            keys.insert((raw.scope, raw.key.clone())),
+            "Duplicate environmental requirement: {}",
+            raw.key
+        );
+        ensure!(
+            match raw.scope {
+                Scope::Taxon => known_taxa.contains(raw.key.as_str()),
+                Scope::CareGroup => known_groups.contains(raw.key.as_str()),
+                Scope::Family => false,
+            },
+            "Environmental requirement is not present in the catalog: {}",
+            raw.key
+        );
+        ensure!(
+            raw.content_version > 0,
+            "Invalid content version for {}",
+            raw.key
+        );
+        parse_date(&raw.reviewed_on, &raw.key)?;
+
+        let minimum = crate::model::SunExposure::parse(&raw.exposure.minimum)
+            .with_context(|| format!("Invalid minimum exposure for {}", raw.key))?;
+        let maximum = crate::model::SunExposure::parse(&raw.exposure.maximum)
+            .with_context(|| format!("Invalid maximum exposure for {}", raw.key))?;
+        ensure!(
+            minimum.level() <= maximum.level(),
+            "Reversed exposure range for {}",
+            raw.key
+        );
+        validate_citations(&raw.exposure.source_ids, &source_ids, &raw.key)?;
+        ensure!(
+            raw.temperature_c.maximum.is_some(),
+            "Temperature target must have a bounded range for {}",
+            raw.key
+        );
+        validate_numeric_target(&raw.temperature_c, -100.0, 100.0, &source_ids, &raw.key)?;
+        if let Some(humidity) = &raw.humidity_percent {
+            validate_numeric_target(humidity, 0.0, 100.0, &source_ids, &raw.key)?;
+        }
+
+        requirements.push((
+            raw.scope,
+            EnvironmentalRequirements {
+                key: raw.key,
+                exposure: ExposureTarget {
+                    minimum,
+                    maximum,
+                    source_ids: raw.exposure.source_ids,
+                },
+                temperature_c: NumericTarget {
+                    minimum: raw.temperature_c.minimum,
+                    maximum: raw.temperature_c.maximum,
+                    source_ids: raw.temperature_c.source_ids,
+                },
+                humidity_percent: raw.humidity_percent.map(|target| NumericTarget {
+                    minimum: target.minimum,
+                    maximum: target.maximum,
+                    source_ids: target.source_ids,
+                }),
+                reviewed_on: raw.reviewed_on,
+                content_version: raw.content_version,
+                fallback_group: None,
+            },
+        ));
+    }
+    Ok(requirements)
+}
+
+fn validate_numeric_target(
+    target: &RawNumericTarget,
+    lower_bound: f64,
+    upper_bound: f64,
+    source_ids: &HashSet<&str>,
+    owner: &str,
+) -> Result<()> {
+    ensure!(
+        target.minimum.is_finite() && (lower_bound..=upper_bound).contains(&target.minimum),
+        "Invalid target minimum for {owner}"
+    );
+    if let Some(maximum) = target.maximum {
+        ensure!(
+            maximum.is_finite()
+                && (lower_bound..=upper_bound).contains(&maximum)
+                && target.minimum <= maximum,
+            "Invalid or reversed target range for {owner}"
+        );
+    }
+    validate_citations(&target.source_ids, source_ids, owner)
+}
+
+fn validate_citations(citations: &[String], source_ids: &HashSet<&str>, owner: &str) -> Result<()> {
+    ensure!(
+        !citations.is_empty(),
+        "Missing requirement citation for {owner}"
+    );
+    for citation in citations {
+        ensure!(
+            source_ids.contains(citation.as_str()),
+            "Unknown requirement source {citation} for {owner}"
+        );
+    }
+    Ok(())
 }
 
 fn bundled() -> Result<KnowledgeBase> {
@@ -400,9 +619,64 @@ mod tests {
             );
         }
 
+        let requirements = bundled_requirements().unwrap();
+        assert_eq!(requirements.len(), 5);
+        for key in [
+            "Chlorophytum comosum",
+            "Pachira aquatica",
+            "Aphelandra squarrosa",
+            "Goeppertia insignis",
+            "Goeppertia warszewiczii",
+        ] {
+            let target = requirements
+                .iter()
+                .find(|(scope, requirement)| *scope == Scope::Taxon && requirement.key == key)
+                .map(|(_, requirement)| requirement)
+                .unwrap_or_else(|| panic!("Missing environmental requirement for {key}"));
+            assert!(target.exposure.minimum.level() <= target.exposure.maximum.level());
+            assert!(
+                target.temperature_c.minimum
+                    <= target.temperature_c.maximum.expect("bounded temperature")
+            );
+        }
+
         let guide = render("jungle velvet").unwrap();
         assert!(guide.contains("GOEPPERTIA WARSZEWICZII"));
         assert!(guide.contains("SOURCES"));
         assert!(guide.contains("https://"));
+    }
+
+    #[test]
+    fn requirement_ranges_and_citations_reject_unverified_values() {
+        let sources = HashSet::from(["known"]);
+        assert!(
+            validate_numeric_target(
+                &RawNumericTarget {
+                    minimum: 24.0,
+                    maximum: Some(18.0),
+                    source_ids: vec!["known".into()],
+                },
+                -100.0,
+                100.0,
+                &sources,
+                "reversed",
+            )
+            .is_err()
+        );
+        assert!(
+            validate_numeric_target(
+                &RawNumericTarget {
+                    minimum: 18.0,
+                    maximum: Some(24.0),
+                    source_ids: vec!["unknown".into()],
+                },
+                -100.0,
+                100.0,
+                &sources,
+                "uncited",
+            )
+            .is_err()
+        );
+        assert!(crate::model::SunExposure::parse("bright_indirect").is_none());
     }
 }

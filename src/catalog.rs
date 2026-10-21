@@ -2,6 +2,10 @@ use crate::model::{MAX_INTERVAL, Taxon};
 use anyhow::{Context, Result, ensure};
 use std::collections::HashSet;
 
+pub const CATALOG_TITLE: &str = "Catalog";
+#[allow(dead_code)]
+pub const FIELD_GUIDE_TITLE: &str = "Field Guide";
+
 pub fn builtin() -> Result<Vec<Taxon>> {
     let mut seen = HashSet::new();
     include_str!("../data/catalog.tsv")

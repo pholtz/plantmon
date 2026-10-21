@@ -135,6 +135,74 @@ impl CardSpacing {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemperatureUnit {
+    Celsius,
+    Fahrenheit,
+}
+
+impl TemperatureUnit {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Celsius => "celsius",
+            Self::Fahrenheit => "fahrenheit",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Celsius => "Celsius (°C)",
+            Self::Fahrenheit => "Fahrenheit (°F)",
+        }
+    }
+
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Celsius => "°C",
+            Self::Fahrenheit => "°F",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "celsius" => Some(Self::Celsius),
+            "fahrenheit" => Some(Self::Fahrenheit),
+            _ => None,
+        }
+    }
+
+    pub fn to_celsius(self, value: f64) -> f64 {
+        match self {
+            Self::Celsius => value,
+            Self::Fahrenheit => (value - 32.0) * 5.0 / 9.0,
+        }
+    }
+
+    pub fn convert_from_celsius(self, value: f64) -> f64 {
+        match self {
+            Self::Celsius => value,
+            Self::Fahrenheit => value * 9.0 / 5.0 + 32.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HomeEnvironment {
+    pub latitude: Option<f64>,
+    pub temperature_unit: Option<TemperatureUnit>,
+    pub baseline_temperature_c: Option<f64>,
+    pub baseline_humidity_percent: Option<f64>,
+}
+
+impl HomeEnvironment {
+    pub fn is_empty(self) -> bool {
+        self.latitude.is_none()
+            && self.temperature_unit.is_none()
+            && self.baseline_temperature_c.is_none()
+            && self.baseline_humidity_percent.is_none()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub bg: Color,
@@ -150,12 +218,14 @@ pub struct Palette {
     pub count: Color,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Settings {
     pub theme: Theme,
     pub display_artifacts: bool,
     pub card_spacing: CardSpacing,
     pub manual_order: bool,
+    pub environment_assessments_enabled: bool,
+    pub home_environment: HomeEnvironment,
 }
 
 #[cfg(test)]

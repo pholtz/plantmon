@@ -1,16 +1,22 @@
-use anyhow::{Context, Result, bail};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::time::{Duration, Instant};
-
 use crate::{
     db::{Database, PlantInput},
     environment::Daylight,
-    model::{self, Maintenance, Plant, TaskKind, Taxon},
-    settings::Settings,
+    knowledge::EnvironmentalRequirements,
+    model::{
+        self, EnvironmentReadingInput, EnvironmentScope, EnvironmentSnapshot, EnvironmentSource,
+        Maintenance, Plant, PlantEnvironment, SunExposure, TaskKind, Taxon,
+    },
+    settings::{HomeEnvironment, Settings, TemperatureUnit},
+};
+use anyhow::{Context, Result, bail};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
 };
 
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(5);
-const SETTINGS_COUNT: usize = 3;
+const SETTINGS_COUNT: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Grouping {
@@ -82,11 +88,18 @@ impl HelpTab {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogPurpose {
+    View,
+    AddPlant,
+}
+
 pub enum Mode {
     Browse,
     Catalog {
         query: String,
         selected: usize,
+        purpose: CatalogPurpose,
     },
     Search {
         value: String,
@@ -119,6 +132,9 @@ pub enum FormAction {
     Edit(i64),
     Schedules(i64),
     Log { plant: i64, kind: TaskKind },
+    EnvironmentSettings,
+    PlantEnvironment(i64),
+    LogEnvironment(i64),
     Custom,
 }
 pub struct Field {
@@ -134,6 +150,7 @@ pub struct Form {
     pub focused: usize,
     pub replace_on_type: bool,
     pub action: FormAction,
+    pub return_to: Option<Box<Mode>>,
 }
 
 impl Form {
@@ -151,6 +168,19 @@ impl Form {
                     (FormAction::Log { .. }, 0) => {
                         &["water", "rotate", "fertilize", "soil", "inspect"][..]
                     }
+                    (FormAction::EnvironmentSettings, 0) => &["off", "on"][..],
+                    (FormAction::EnvironmentSettings, 2) => {
+                        &["not set", "celsius", "fahrenheit"][..]
+                    }
+                    (FormAction::PlantEnvironment(_), 0) => &[
+                        "not set",
+                        "full_shade",
+                        "mostly_shade",
+                        "partial_sun",
+                        "mostly_sun",
+                        "full_sun",
+                    ][..],
+                    (FormAction::LogEnvironment(_), 0) => &["plant", "home"][..],
                     (FormAction::Custom, 6) => crate::art::HABITS,
                     _ => &[],
                 };
@@ -173,7 +203,12 @@ impl Form {
             focused: 0,
             replace_on_type: true,
             fields,
+            return_to: None,
         }
+    }
+    fn returning_to(mut self, mode: Mode) -> Self {
+        self.return_to = Some(Box::new(mode));
+        self
     }
     fn values(&self) -> Vec<String> {
         self.fields
@@ -194,6 +229,8 @@ pub struct App {
     pub history: Vec<Maintenance>,
     pub mode: Mode,
     pub settings: Settings,
+    pub environments: HashMap<i64, EnvironmentSnapshot>,
+    pub requirements: HashMap<String, EnvironmentalRequirements>,
     pub daylight: Daylight,
     pub query: String,
     pub due_only: bool,
@@ -222,6 +259,8 @@ impl App {
             history: vec![],
             mode: Mode::Browse,
             settings: Settings::default(),
+            environments: HashMap::new(),
+            requirements: HashMap::new(),
             daylight: Daylight::at(now),
             query: String::new(),
             due_only: false,
@@ -275,6 +314,22 @@ impl App {
         self.settings = self.db.settings()?;
         self.taxa = self.db.taxa()?;
         self.plants = self.db.plants()?;
+        self.requirements.clear();
+        for plant in &self.plants {
+            if !self.requirements.contains_key(&plant.taxon.id)
+                && let Some(requirement) = crate::knowledge::requirements_for(&plant.taxon)?
+            {
+                self.requirements
+                    .insert(plant.taxon.id.clone(), requirement);
+            }
+        }
+        self.environments.clear();
+        for plant in &self.plants {
+            self.environments
+                .insert(plant.id, self.db.environment_snapshot(plant.id, self.now)?);
+        }
+        self.daylight =
+            Daylight::at_with_latitude(self.now, self.settings.home_environment.latitude);
         // Discard indexes into the old collection before trying to restore selection.
         self.visible.clear();
         self.refilter();
@@ -296,7 +351,8 @@ impl App {
 
     pub fn tick(&mut self) {
         self.now = model::now();
-        self.daylight = Daylight::at(self.now);
+        self.daylight =
+            Daylight::at_with_latitude(self.now, self.settings.home_environment.latitude);
         self.frame += 1;
         self.refilter();
         if self
@@ -372,6 +428,19 @@ impl App {
                         KeyCode::Home => setting = 0,
                         KeyCode::End => setting = SETTINGS_COUNT - 1,
                         KeyCode::Left | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                            if setting == 3 {
+                                let return_mode = Mode::Help {
+                                    previous,
+                                    selected,
+                                    offset,
+                                    tab,
+                                    setting,
+                                };
+                                return Ok(Mode::Form(
+                                    environment_settings_form(self.settings)
+                                        .returning_to(return_mode),
+                                ));
+                            }
                             let mut settings = self.settings;
                             match setting {
                                 0 => {
@@ -386,11 +455,12 @@ impl App {
                                         _ => !settings.display_artifacts,
                                     };
                                 }
-                                _ => {
+                                2 => {
                                     settings.card_spacing = settings
                                         .card_spacing
                                         .cycle(if key.code == KeyCode::Left { -1 } else { 1 });
                                 }
+                                _ => unreachable!("settings selection is bounded"),
                             }
                             if settings != self.settings {
                                 match self.db.save_settings(settings) {
@@ -600,11 +670,15 @@ impl App {
             Mode::Catalog {
                 mut query,
                 mut selected,
+                purpose,
             } => {
-                let count = self.catalog_matches(&query).len() + 1;
+                let count = self.catalog_matches(&query).len()
+                    + usize::from(purpose == CatalogPurpose::AddPlant);
                 match key.code {
                     KeyCode::Esc => return Ok(Mode::Browse),
-                    KeyCode::Char('n') if ctrl => return Ok(Mode::Form(custom_form())),
+                    KeyCode::Char('n') if ctrl && purpose == CatalogPurpose::AddPlant => {
+                        return Ok(Mode::Form(custom_form()));
+                    }
                     KeyCode::Up => selected = selected.saturating_sub(1),
                     KeyCode::Down => selected = (selected + 1).min(count.saturating_sub(1)),
                     KeyCode::PageDown => selected = (selected + 10).min(count.saturating_sub(1)),
@@ -612,14 +686,16 @@ impl App {
                     KeyCode::Home => selected = 0,
                     KeyCode::End => selected = count.saturating_sub(1),
                     KeyCode::Enter => {
-                        if selected == count.saturating_sub(1) {
-                            return Ok(Mode::Form(custom_form()));
-                        }
-                        if let Some(taxon) = self.catalog_matches(&query).get(selected) {
-                            return Ok(Mode::Form(plant_form(
-                                FormAction::Add(Box::new((*taxon).clone())),
-                                None,
-                            )));
+                        if purpose == CatalogPurpose::AddPlant {
+                            if selected == self.catalog_matches(&query).len() {
+                                return Ok(Mode::Form(custom_form()));
+                            }
+                            if let Some(taxon) = self.catalog_matches(&query).get(selected) {
+                                return Ok(Mode::Form(plant_form(
+                                    FormAction::Add(Box::new((*taxon).clone())),
+                                    None,
+                                )));
+                            }
                         }
                     }
                     KeyCode::Char('u') if ctrl => {
@@ -638,16 +714,24 @@ impl App {
                     }
                     _ => {}
                 }
-                Ok(Mode::Catalog { query, selected })
+                Ok(Mode::Catalog {
+                    query,
+                    selected,
+                    purpose,
+                })
             }
             Mode::Form(mut form) => {
                 let save = form.fields.len();
                 let cancel = save + 1;
                 match key.code {
-                    KeyCode::Esc => return Ok(Mode::Browse),
+                    KeyCode::Esc => {
+                        return Ok(form.return_to.take().map_or(Mode::Browse, |mode| *mode));
+                    }
                     KeyCode::Char('s') if ctrl => return Ok(self.submit_form(form)),
                     KeyCode::Enter if form.focused == save => return Ok(self.submit_form(form)),
-                    KeyCode::Enter if form.focused == cancel => return Ok(Mode::Browse),
+                    KeyCode::Enter if form.focused == cancel => {
+                        return Ok(form.return_to.take().map_or(Mode::Browse, |mode| *mode));
+                    }
                     KeyCode::Tab | KeyCode::Down => {
                         form.focused = (form.focused + 1) % (cancel + 1);
                         form.replace_on_type = true;
@@ -668,6 +752,10 @@ impl App {
                         };
                     }
                     KeyCode::Left | KeyCode::Right => {
+                        let old_unit = (matches!(form.action, FormAction::EnvironmentSettings)
+                            && form.focused == 2)
+                            .then(|| TemperatureUnit::parse(&form.fields[2].value))
+                            .flatten();
                         let field = &mut form.fields[form.focused];
                         let forward = key.code == KeyCode::Right;
                         if !field.choices.is_empty() {
@@ -686,6 +774,18 @@ impl App {
                                 .saturating_add(if forward { 1 } else { -1 })
                                 .clamp(0, 3650)
                                 .to_string();
+                        }
+                        let new_unit = (matches!(form.action, FormAction::EnvironmentSettings)
+                            && form.focused == 2)
+                            .then(|| TemperatureUnit::parse(&form.fields[2].value))
+                            .flatten();
+                        if let (Some(old_unit), Some(new_unit)) = (old_unit, new_unit)
+                            && old_unit != new_unit
+                            && let Ok(value) = form.fields[3].value.parse::<f64>()
+                        {
+                            form.fields[3].value = format_number(
+                                new_unit.convert_from_celsius(old_unit.to_celsius(value)),
+                            );
                         }
                         form.replace_on_type = true;
                     }
@@ -759,6 +859,14 @@ impl App {
                 return Ok(Mode::Catalog {
                     query: String::new(),
                     selected: 0,
+                    purpose: CatalogPurpose::AddPlant,
+                });
+            }
+            KeyCode::Char('c') => {
+                return Ok(Mode::Catalog {
+                    query: String::new(),
+                    selected: 0,
+                    purpose: CatalogPurpose::View,
                 });
             }
             KeyCode::Char('/') => {
@@ -853,6 +961,23 @@ impl App {
                     )));
                 }
             }
+            KeyCode::Char('E') => {
+                if let Some(p) = self.selected_plant() {
+                    return Ok(Mode::Form(plant_environment_form(
+                        p,
+                        self.settings.home_environment.temperature_unit,
+                    )));
+                }
+            }
+            KeyCode::Char('v') => {
+                if let Some(p) = self.selected_plant() {
+                    return Ok(Mode::Form(environment_log_form(
+                        p.id,
+                        p.name(),
+                        self.settings.home_environment.temperature_unit,
+                    )));
+                }
+            }
             KeyCode::Char('e') => {
                 if let Some(p) = self.selected_plant() {
                     return Ok(Mode::Form(plant_form(FormAction::Edit(p.id), Some(p))));
@@ -930,8 +1055,8 @@ impl App {
         Ok(())
     }
 
-    fn submit_form(&mut self, form: Form) -> Mode {
-        match self.save_form(&form) {
+    fn submit_form(&mut self, mut form: Form) -> Mode {
+        match self.save_form(&mut form) {
             Ok(mode) => mode,
             Err(error) => {
                 self.notify(format!("{error:#}"), true);
@@ -962,7 +1087,9 @@ impl App {
                     form.replace_on_type = false;
                 }
             }
-            Mode::Catalog { query, selected } => {
+            Mode::Catalog {
+                query, selected, ..
+            } => {
                 query.extend(clean.chars().take(1000usize.saturating_sub(query.len())));
                 *selected = 0;
             }
@@ -973,7 +1100,7 @@ impl App {
         }
     }
 
-    fn save_form(&mut self, form: &Form) -> Result<Mode> {
+    fn save_form(&mut self, form: &mut Form) -> Result<Mode> {
         let v = form.values();
         match &form.action {
             FormAction::Add(taxon) => {
@@ -1022,6 +1149,100 @@ impl App {
                 self.reload()?;
                 self.notify(format!("Recorded {} · {}. Timers use the latest actual completion, not entry order.", kind.key(), model::date(when)), false);
             }
+            FormAction::EnvironmentSettings => {
+                let unit = match v[2].as_str() {
+                    "not set" | "" => None,
+                    value => Some(
+                        TemperatureUnit::parse(value)
+                            .with_context(|| format!("Unknown temperature unit: {value}"))?,
+                    ),
+                };
+                let displayed_temperature = optional_number(&v[3], "Baseline temperature")?;
+                let baseline_temperature_c = match (displayed_temperature, unit) {
+                    (Some(value), Some(unit)) => Some(unit.to_celsius(value)),
+                    (Some(_), None) => {
+                        bail!("Choose a temperature unit or clear the baseline temperature")
+                    }
+                    (None, _) => None,
+                };
+                let mut settings = self.settings;
+                settings.environment_assessments_enabled = match v[0].as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => bail!("Estimated assessments must be on or off"),
+                };
+                settings.home_environment = HomeEnvironment {
+                    latitude: optional_number(&v[1], "Approximate latitude")?,
+                    temperature_unit: unit,
+                    baseline_temperature_c,
+                    baseline_humidity_percent: optional_number(&v[4], "Baseline humidity")?,
+                };
+                self.db.save_settings(settings)?;
+                self.settings = settings;
+                self.reload()?;
+                self.notify("Environment setup saved locally.", false);
+            }
+            FormAction::PlantEnvironment(id) => {
+                let exposure = match v[0].as_str() {
+                    "not set" | "" => None,
+                    value => Some(
+                        SunExposure::parse(value)
+                            .with_context(|| format!("Unknown sun exposure: {value}"))?,
+                    ),
+                };
+                let displayed_temperature = optional_number(&v[1], "Temperature override")?;
+                let temperature_c = match (
+                    displayed_temperature,
+                    self.settings.home_environment.temperature_unit,
+                ) {
+                    (Some(value), Some(unit)) => Some(unit.to_celsius(value)),
+                    (Some(_), None) => {
+                        bail!("Choose a preferred temperature unit in Environment setup first")
+                    }
+                    (None, _) => None,
+                };
+                self.db.set_plant_environment(
+                    *id,
+                    PlantEnvironment {
+                        exposure,
+                        temperature_c,
+                        humidity_percent: optional_number(&v[2], "Humidity override")?,
+                    },
+                )?;
+                self.reload()?;
+                self.notify("Plant environment saved.", false);
+            }
+            FormAction::LogEnvironment(plant) => {
+                let scope = EnvironmentScope::parse(&v[0])
+                    .with_context(|| format!("Unknown environment scope: {}", v[0]))?;
+                let observed_at = model::parse_when(&v[1], self.now)?;
+                let displayed_temperature = optional_number(&v[2], "Temperature")?;
+                let temperature_c = match (
+                    displayed_temperature,
+                    self.settings.home_environment.temperature_unit,
+                ) {
+                    (Some(value), Some(unit)) => Some(unit.to_celsius(value)),
+                    (Some(_), None) => {
+                        bail!("Choose a preferred temperature unit in Environment setup first")
+                    }
+                    (None, _) => None,
+                };
+                self.db.log_environment(
+                    EnvironmentReadingInput {
+                        plant_id: (scope == EnvironmentScope::Plant).then_some(*plant),
+                        scope,
+                        source: EnvironmentSource::Manual,
+                        observed_at,
+                        temperature_c,
+                        humidity_percent: optional_number(&v[3], "Humidity")?,
+                        lux: optional_number(&v[4], "Lux")?,
+                        ppfd: optional_number(&v[5], "PPFD")?,
+                    },
+                    self.now,
+                )?;
+                self.reload()?;
+                self.notify("Environment snapshot recorded.", false);
+            }
             FormAction::Custom => {
                 if !crate::art::HABITS.contains(&v[6].as_str()) {
                     bail!("Habit must be: {}", crate::art::HABITS.join(", "));
@@ -1050,7 +1271,7 @@ impl App {
                 )));
             }
         }
-        Ok(Mode::Browse)
+        Ok(form.return_to.take().map_or(Mode::Browse, |mode| *mode))
     }
 }
 
@@ -1103,6 +1324,133 @@ fn plant_form(action: FormAction, plant: Option<&Plant>) -> Form {
         ],
     )
 }
+fn environment_settings_form(settings: Settings) -> Form {
+    let environment = settings.home_environment;
+    let temperature = match (
+        environment.baseline_temperature_c,
+        environment.temperature_unit,
+    ) {
+        (Some(value), Some(unit)) => format_number(unit.convert_from_celsius(value)),
+        _ => String::new(),
+    };
+    Form::new(
+        "Environment setup",
+        "Optional and local only. Latitude may be rounded; it drives a rough seasonal daylight estimate, never weather, window transmission, or measured plant light.",
+        FormAction::EnvironmentSettings,
+        vec![
+            (
+                "Estimated assessments",
+                if settings.environment_assessments_enabled {
+                    "on"
+                } else {
+                    "off"
+                }
+                .into(),
+            ),
+            (
+                "Approximate signed latitude",
+                environment.latitude.map(format_number).unwrap_or_default(),
+            ),
+            (
+                "Preferred temperature unit",
+                environment
+                    .temperature_unit
+                    .map(TemperatureUnit::key)
+                    .unwrap_or("not set")
+                    .into(),
+            ),
+            ("Baseline indoor temperature", temperature),
+            (
+                "Baseline humidity (%)",
+                environment
+                    .baseline_humidity_percent
+                    .map(format_number)
+                    .unwrap_or_default(),
+            ),
+        ],
+    )
+}
+
+fn plant_environment_form(plant: &Plant, unit: Option<TemperatureUnit>) -> Form {
+    let temperature = match (plant.environment.temperature_c, unit) {
+        (Some(value), Some(unit)) => format_number(unit.convert_from_celsius(value)),
+        _ => String::new(),
+    };
+    let hint = format!(
+        "Explicit optional inputs only; free-text location is not evidence. Temperature uses {}. Ctrl-U clears text fields.",
+        unit.map(TemperatureUnit::symbol)
+            .unwrap_or("the unit chosen in Environment setup")
+    );
+    Form::new(
+        format!("Plant environment · {}", plant.name()),
+        &hint,
+        FormAction::PlantEnvironment(plant.id),
+        vec![
+            (
+                "Sun exposure (rough five-level rating)",
+                plant
+                    .environment
+                    .exposure
+                    .map(SunExposure::key)
+                    .unwrap_or("not set")
+                    .into(),
+            ),
+            ("Room temperature override", temperature),
+            (
+                "Room humidity override (%)",
+                plant
+                    .environment
+                    .humidity_percent
+                    .map(format_number)
+                    .unwrap_or_default(),
+            ),
+        ],
+    )
+}
+
+fn environment_log_form(plant: i64, name: &str, unit: Option<TemperatureUnit>) -> Form {
+    let hint = format!(
+        "Manual snapshots may be backdated. Enter at least one metric. Temperature uses {}; lux is illuminance and PPFD remains a snapshot, not DLI.",
+        unit.map(TemperatureUnit::symbol)
+            .unwrap_or("the unit chosen in Environment setup")
+    );
+    Form::new(
+        format!("Log environment · {name}"),
+        &hint,
+        FormAction::LogEnvironment(plant),
+        vec![
+            ("Scope", "plant".into()),
+            ("When", "now".into()),
+            ("Temperature (optional)", String::new()),
+            ("Humidity % (optional)", String::new()),
+            ("Illuminance lux (optional)", String::new()),
+            ("PPFD µmol/m²/s (optional)", String::new()),
+        ],
+    )
+}
+
+fn optional_number(value: &str, label: &str) -> Result<Option<f64>> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let number = value
+        .trim()
+        .parse::<f64>()
+        .with_context(|| format!("{label} must be a number or blank"))?;
+    if !number.is_finite() {
+        bail!("{label} must be finite");
+    }
+    Ok(Some(number))
+}
+
+fn format_number(value: f64) -> String {
+    let formatted = format!("{value:.1}");
+    formatted
+        .strip_suffix(".0")
+        .unwrap_or(&formatted)
+        .to_string()
+}
+
 fn custom_form() -> Form {
     Form::new(
         "Custom species / cultivar / hybrid",
@@ -1303,6 +1651,25 @@ mod tests {
     }
 
     #[test]
+    fn catalog_key_opens_a_read_only_browser() -> Result<()> {
+        let mut app = App::new(Database::memory()?)?;
+        press(&mut app, KeyCode::Char('c'));
+        type_text(&mut app, "hoya");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            &app.mode,
+            Mode::Catalog {
+                query,
+                purpose: CatalogPurpose::View,
+                ..
+            } if query == "hoya"
+        ));
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(app.mode, Mode::Browse));
+        Ok(())
+    }
+
+    #[test]
     fn adding_a_plant_needs_only_typing_arrows_and_enter() -> Result<()> {
         let mut app = App::new(Database::memory()?)?;
         // The first command in greenhouse help is Add; no mnemonic is needed.
@@ -1337,7 +1704,14 @@ mod tests {
         press(&mut app, KeyCode::Char('?'));
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('?'));
-        assert!(matches!(&app.mode, Mode::Catalog { query, selected: 1 } if query == "hoya"));
+        assert!(matches!(
+            &app.mode,
+            Mode::Catalog {
+                query,
+                selected: 1,
+                ..
+            } if query == "hoya"
+        ));
         press(&mut app, KeyCode::Enter);
         type_text(&mut app, "quiet Hoya");
         press(&mut app, KeyCode::Down);
@@ -1474,6 +1848,85 @@ mod tests {
         assert_eq!(app.settings.theme, Theme::Light);
         assert!(app.settings.display_artifacts);
         assert_eq!(app.settings.card_spacing, CardSpacing::Compact);
+        Ok(())
+    }
+
+    #[test]
+    fn environment_setup_is_opt_in_clearable_and_keeps_inputs_when_disabled() -> Result<()> {
+        let mut db = Database::memory()?;
+        let taxon = db
+            .taxa()?
+            .into_iter()
+            .find(|taxon| taxon.id == "Goeppertia warszewiczii")
+            .expect("pilot taxon");
+        db.add_plant(&taxon, &PlantInput::default(), model::now())?;
+        let mut app = App::new(db)?;
+        assert!(!app.settings.environment_assessments_enabled);
+
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Enter);
+        let Mode::Form(form) = &mut app.mode else {
+            panic!("environment setup did not open")
+        };
+        form.fields[0].value = "on".into();
+        form.fields[1].value = "34.1".into();
+        form.fields[2].value = "celsius".into();
+        form.fields[3].value = "22".into();
+        form.fields[4].value = "55".into();
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.settings.environment_assessments_enabled);
+        assert_eq!(app.settings.home_environment.latitude, Some(34.1));
+        assert!(matches!(app.mode, Mode::Help { .. }));
+        press(&mut app, KeyCode::Esc);
+
+        press(&mut app, KeyCode::Char('E'));
+        let Mode::Form(form) = &mut app.mode else {
+            panic!("plant environment form did not open")
+        };
+        form.fields[0].value = "partial_sun".into();
+        form.fields[1].value = "23".into();
+        form.fields[2].value = "65".into();
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let plant = app.selected_plant().unwrap();
+        assert_eq!(plant.environment.exposure, Some(SunExposure::PartialSun));
+        assert_eq!(plant.environment.temperature_c, Some(23.0));
+        let plant_id = plant.id;
+
+        press(&mut app, KeyCode::Char('v'));
+        let Mode::Form(form) = &mut app.mode else {
+            panic!("environment log form did not open")
+        };
+        form.fields[3].value = "61".into();
+        form.fields[4].value = "700".into();
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let snapshot = app.environments.get(&plant_id).unwrap();
+        assert_eq!(snapshot.humidity.map(|value| value.value), Some(61.0));
+        assert_eq!(snapshot.lux.map(|value| value.value), Some(700.0));
+
+        press(&mut app, KeyCode::Char('?'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Enter);
+        let Mode::Form(form) = &mut app.mode else {
+            panic!("environment setup did not reopen")
+        };
+        form.fields[0].value = "off".into();
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(!app.settings.environment_assessments_enabled);
+        assert_eq!(app.settings.home_environment.latitude, Some(34.1));
+        assert_eq!(
+            app.selected_plant().unwrap().environment.exposure,
+            Some(SunExposure::PartialSun)
+        );
+        assert!(
+            app.environments
+                .get(&plant_id)
+                .unwrap()
+                .latest_lux_reading
+                .is_some()
+        );
         Ok(())
     }
 }

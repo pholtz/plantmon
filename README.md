@@ -78,6 +78,7 @@ The original action-specific shortcuts remain available:
 | Home / End | First / last plant |
 | PgUp / PgDn | Page the grid; scroll the focused specimen or help |
 | `a` | Add a plant from the catalog |
+| `c` | Browse the Catalog |
 | `/` | Filter by botanical/common name, family, care group, location, or tags |
 | `g` | Sort by name → family → primary care group → location → manual order |
 | `o` | Reorder the greenhouse in a keyboard-controlled list |
@@ -88,16 +89,19 @@ The original action-specific shortcuts remain available:
 | `t` | Set individual care intervals; **0 disables** a task |
 | `e` | Edit nickname, location, acquired date, pot, substrate, tags, notes |
 | `u` | Undo the last-entered maintenance event, after confirmation |
+| `E` | Configure explicit five-level sun exposure and optional room overrides |
+| `v` | Log a manual home/plant temperature, humidity, lux, or PPFD snapshot |
 | `D` | Delete the selected plant and its journal, after confirmation |
 | `R` | Reload the database immediately |
 | `?` | Open contextual help / command menu |
 | Esc | Cancel dialog, leave detail view, or clear collection filters |
 | `q` / Ctrl-C | Quit (`q` stays text inside active text inputs) |
 
-In the catalog, type to search, use arrows / PgUp / PgDn to select, and Enter
-to choose. A **Custom plant type** option is always below the results and is
-selected automatically when there are no matches. Select it with arrows and
-Enter, use End to jump to it, or use the existing Ctrl-N shortcut.
+Press `c` from the greenhouse to browse the **Catalog** without starting an add
+flow. Type to search and use arrows / PgUp / PgDn to select an entry. When adding
+with `a`, Enter chooses the selected type. A **Custom plant type** option is always
+below those results and is selected automatically when there are no matches.
+Select it with arrows and Enter, use End to jump to it, or use Ctrl-N.
 
 In forms: Enter advances, Up/Down moves between fields and **Save / Cancel**, and
 Enter on either control activates it. Left/Right switches between Save and
@@ -124,6 +128,10 @@ changes it. Changes apply immediately and are saved automatically in SQLite:
 - **Card spacing**: Relaxed by default, adding vertical breathing room when the
   terminal has space. Compact reduces the target row height and hides card artwork
   as needed so more plants can fit on each page.
+- **Environment setup**: opens an optional local-only profile. Estimated assessments
+  are off by default and can be disabled without deleting latitude, preferred unit,
+  baselines, plant overrides, or readings. Approximate signed latitude may be rounded;
+  no address, geocoding, weather service, or other network call is used.
 
 An explicit light description in the existing **Location / light exposure** field
 (e.g. `Kitchen / full sun`, `part sun`, or `shade`) overrides the catalog light
@@ -131,10 +139,34 @@ preference for decorations. Without one, catalog light preference is used; an
 unknown preference defaults to part sun. This is cosmetic, not measured exposure,
 and never changes maintenance schedules or water estimates.
 
-The header's **☀ / ☾** indicates estimated daylight / nighttime. Plantmon uses the
-current local date and time: **6am inclusive to 6pm exclusive** is daytime. The
-state is recomputed every tick and on startup, including after sleep. No weather,
-location lookup, seasonal sunrise calculation, or network access is involved.
+The header's **☀ / ☾** indicates estimated daylight / nighttime. Without latitude,
+Plantmon preserves the original **6am inclusive to 6pm exclusive** local-clock behavior.
+With optional approximate latitude, the current local date drives a bounded astronomical
+day-length estimate, including polar day/night; without longitude it is centered on local
+noon and is not a claimed sunrise time. It is recomputed every tick and after sleep. No
+weather, address lookup, horizon, or window transmission is involved.
+
+### Optional environment observations
+
+Press `E` on a specimen to set its explicit five-level exposure and optional room
+temperature/humidity overrides. Press `v` to log a manual home- or plant-scoped snapshot;
+entries accept the same backdates as maintenance. Every field is optional and independently
+clearable. Plant-specific fresh readings take precedence over plant overrides, then fresh
+home readings and home baselines. Readings older than 24 hours remain visible but become
+stale and are excluded from current assessments. The detail view also reports bounded 24-hour
+and seven-day averages when more than one observation exists.
+
+When explicitly enabled, the detail view compares each metric independently with reviewed,
+cited targets for the five pilot taxa. Results are only **unknown**, **below target**,
+**within target**, or **above target**—there is no composite health score or false precision.
+Free-text location and catalog light prose never feed assessments. Unsupported taxa keep
+showing observations and state that a source-backed target is unavailable.
+
+Lux is labeled as illuminance, and sparse lux/PPFD entries are snapshots. Plantmon does not
+calculate DLI; that requires sufficiently sampled PPFD time series. Reading rows retain a
+source (`manual`, `import`, or `sensor`) and timestamps for future integrations, but merely
+labeling a row as sensor data does not create sensor-grade precision. All data remains in the
+local SQLite database.
 
 ### Maintenance and backdating
 
@@ -282,20 +314,23 @@ plantmon --guide 'prayer plants'
 `--demo` uses an in-memory database and discards all changes on exit, regardless
 of your configured database path. It never seeds examples into your real garden.
 
-To back up, quit all plantmon instances and copy the `.sqlite3` file. While the
-app is running, use SQLite's backup API / the `sqlite3` CLI `.backup` command;
-do not copy only the main file while WAL transactions are active. Schema version
-3 is recorded in `PRAGMA user_version`; newer unsupported schemas are refused
-before modification. The version-1 upgrade adds a settings table, and version 3
-adds persistent display positions. Both preserve plants, schedules, and journals.
+To back up, quit all plantmon instances and copy the `.sqlite3` file. While the app is
+running, use SQLite's backup API / the `sqlite3` CLI `.backup` command; do not copy only
+the main file while WAL transactions are active. Schema version **4** is recorded in
+`PRAGMA user_version`; newer unsupported schemas are refused before modification. The
+version-1 upgrade adds settings, version 3 adds display order, and version 4 additively
+adds per-plant environment configuration and timestamped readings. Plant deletion cascades
+to that plant's environment row and plant-scoped readings; home readings remain. Clearing
+a profile field deletes its setting, while disabling assessments retains every input.
 Keep a backup before any schema upgrade.
 
-For this specific version-3 upgrade, rollback to an older schema-2 binary is
-additive-safe: stop all instances, back up the database, then run
-`sqlite3 /path/to/garden.sqlite3 'PRAGMA user_version = 2;'` before launching the
-old binary. It ignores the extra display-order column and manual-order setting;
-plants and care records remain usable. Do not apply this procedure to unrelated
-future migrations.
+Rollback from schema 4 to a schema-3 binary is additive-safe: stop all instances, back up
+the database, then run
+`sqlite3 /path/to/garden.sqlite3 'PRAGMA user_version = 3;'` before launching the old
+binary. It ignores the environment tables and settings but leaves them in the file; a
+schema-4 binary can use them again later. A plant deleted by the old binary also loses its
+plant-scoped environment rows through foreign-key cascades. This procedure does not erase
+environment data and should not be applied to unrelated future migrations.
 
 ## Development
 

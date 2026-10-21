@@ -1,0 +1,90 @@
+schema_version = 1
+
+[[requirement]]
+scope = "taxon"
+key = "Chlorophytum comosum"
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[requirement.exposure]
+minimum = "full_shade"
+maximum = "partial_sun"
+source_ids = ["ncsu-chlorophytum-comosum"]
+
+[requirement.temperature_c]
+minimum = 18.0
+maximum = 24.0
+source_ids = ["sdsu-spider-plants"]
+
+[[requirement]]
+scope = "taxon"
+key = "Pachira aquatica"
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[requirement.exposure]
+minimum = "mostly_shade"
+maximum = "partial_sun"
+source_ids = ["ncsu-pachira-aquatica"]
+
+[requirement.temperature_c]
+minimum = 18.0
+maximum = 24.0
+source_ids = ["ncsu-pachira-aquatica"]
+
+[[requirement]]
+scope = "taxon"
+key = "Aphelandra squarrosa"
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[requirement.exposure]
+minimum = "mostly_shade"
+maximum = "partial_sun"
+source_ids = ["ncsu-aphelandra-squarrosa"]
+
+[requirement.temperature_c]
+minimum = 18.0
+maximum = 24.0
+source_ids = ["ncsu-aphelandra-squarrosa", "uga-growing-indoor-plants"]
+
+[requirement.humidity_percent]
+minimum = 40.0
+maximum = 80.0
+source_ids = ["csu-zebra-plant"]
+
+[[requirement]]
+scope = "taxon"
+key = "Goeppertia insignis"
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[requirement.exposure]
+minimum = "mostly_shade"
+maximum = "partial_sun"
+source_ids = ["ncsu-goeppertia-insignis"]
+
+[requirement.temperature_c]
+minimum = 18.0
+maximum = 24.0
+source_ids = ["ncsu-goeppertia-insignis"]
+
+[[requirement]]
+scope = "taxon"
+key = "Goeppertia warszewiczii"
+reviewed_on = "2026-10-19"
+content_version = 1
+
+[requirement.exposure]
+minimum = "mostly_shade"
+maximum = "partial_sun"
+source_ids = ["ncsu-goeppertia-warszewiczii"]
+
+[requirement.temperature_c]
+minimum = 18.0
+maximum = 24.0
+source_ids = ["ncsu-goeppertia-warszewiczii"]
+
+[requirement.humidity_percent]
+minimum = 60.0
+source_ids = ["ncsu-goeppertia-warszewiczii"]
