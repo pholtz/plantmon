@@ -98,10 +98,12 @@ The original action-specific shortcuts remain available:
 | `q` / Ctrl-C | Quit (`q` stays text inside active text inputs) |
 
 Press `c` from the greenhouse to browse the **Catalog** without starting an add
-flow. Type to search and use arrows / PgUp / PgDn to select an entry. When adding
-with `a`, Enter chooses the selected type. A **Custom plant type** option is always
-below those results and is selected automatically when there are no matches.
-Select it with arrows and Enter, use End to jump to it, or use Ctrl-N.
+flow. Type to search, use arrows / PgUp / PgDn to select an entry, and press Enter
+for an illustrated detail page with identity and care information. Arrows move
+between entries there; Esc returns to the results. When adding with `a`, Enter
+chooses the selected type. A **Custom plant type** option is always below those
+results and is selected automatically when there are no matches. Select it with
+arrows and Enter, use End to jump to it, or use Ctrl-N.
 
 In forms: Enter advances, Up/Down moves between fields and **Save / Cancel**, and
 Enter on either control activates it. Left/Right switches between Save and

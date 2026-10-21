@@ -3,7 +3,7 @@ use crate::{
     art,
     health::{self, MetricAssessment, Status},
     knowledge::NumericTarget,
-    model::{self, EnvironmentValue, MetricSummary, Plant},
+    model::{self, EnvironmentValue, MetricSummary, Plant, Taxon},
     settings::{CardSpacing, Palette, Settings, TemperatureUnit},
 };
 use ratatui::{
@@ -150,7 +150,8 @@ fn modal(frame: &mut Frame, app: &App, area: Rect, mode: &Mode) {
             query,
             selected,
             purpose,
-        } => catalog(frame, app, area, query, *selected, *purpose),
+            detail,
+        } => catalog(frame, app, area, query, *selected, *purpose, *detail),
         Mode::Form(form) => form_view(frame, app, area, form),
     }
 }
@@ -1062,6 +1063,7 @@ fn catalog(
     query: &str,
     selected: usize,
     purpose: CatalogPurpose,
+    detail: bool,
 ) {
     let colors = app.settings.theme.palette();
     let adding = purpose == CatalogPurpose::AddPlant;
@@ -1073,6 +1075,11 @@ fn catalog(
         &format!(" {} ", crate::catalog::CATALOG_TITLE),
         colors,
     );
+    let matches = app.catalog_matches(query);
+    if detail && let Some(taxon) = matches.get(selected) {
+        catalog_detail(frame, app, inner, taxon, selected, matches.len());
+        return;
+    }
     let parts = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(1),
@@ -1080,7 +1087,6 @@ fn catalog(
         Constraint::Length(u16::from(adding)),
     ])
     .split(inner);
-    let matches = app.catalog_matches(query);
     frame.render_widget(
         Paragraph::new(format!("Search: {query}▏\n{} matches", matches.len()))
             .style(Style::default().fg(colors.accent)),
@@ -1141,6 +1147,111 @@ fn catalog(
             parts[3],
         );
     }
+}
+
+fn catalog_detail(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+    taxon: &Taxon,
+    selected: usize,
+    total: usize,
+) {
+    let colors = app.settings.theme.palette();
+    let details = Paragraph::new(vec![
+        botanical_name(taxon, colors),
+        Line::from(Span::styled(
+            taxon.common.clone(),
+            Style::default()
+                .fg(colors.muted)
+                .add_modifier(Modifier::ITALIC),
+        )),
+        Line::raw(""),
+        detail_field("Family", taxon.family.clone(), colors),
+        detail_field("Care groups", taxon.groups.clone(), colors),
+        detail_field("Growth habit", taxon.habit.clone(), colors),
+        Line::raw(""),
+        detail_label("LIGHT & WATER", colors),
+        detail_field("Light", taxon.light.clone(), colors),
+        detail_field(
+            "Water check",
+            format!("{} days (starting interval)", taxon.water_days),
+            colors,
+        ),
+        Line::raw(""),
+        detail_label("CARE NOTES", colors),
+        Line::from(Span::styled(
+            taxon.care.clone(),
+            Style::default()
+                .fg(colors.warning)
+                .add_modifier(Modifier::ITALIC),
+        )),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "Catalog guidance is a starting point; adjust care to the plant and its conditions.",
+            Style::default().fg(colors.muted),
+        )),
+    ])
+    .block(panel(
+        &format!(" Details · {} of {} ", selected + 1, total),
+        true,
+        colors,
+    ))
+    .wrap(Wrap { trim: false });
+
+    let portrait = Paragraph::new(styled_art(art::silhouette(taxon, app.frame / 2), colors))
+        .alignment(Alignment::Center)
+        .block(panel(&format!(" {} ", taxon.habit), false, colors));
+
+    if area.width >= 72 && area.height >= 14 {
+        let parts = Layout::horizontal([
+            Constraint::Length((area.width / 3).clamp(24, 34)),
+            Constraint::Min(1),
+        ])
+        .split(area);
+        frame.render_widget(portrait, parts[0]);
+        frame.render_widget(details, parts[1]);
+    } else if area.height >= 26 {
+        let parts = Layout::vertical([Constraint::Length(11), Constraint::Min(1)]).split(area);
+        frame.render_widget(portrait, parts[0]);
+        frame.render_widget(details, parts[1]);
+    } else {
+        frame.render_widget(details, area);
+    }
+}
+
+fn botanical_name(taxon: &Taxon, colors: Palette) -> Line<'static> {
+    let italic = Style::default()
+        .fg(colors.accent)
+        .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+    let designation = Style::default()
+        .fg(colors.accent)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = vec![Span::styled(taxon.genus.clone(), italic)];
+    if !taxon.species.is_empty() {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(taxon.species.clone(), italic));
+    }
+    if !taxon.designation.is_empty() {
+        spans.push(Span::styled(format!(" {}", taxon.designation), designation));
+    }
+    Line::from(spans)
+}
+
+fn detail_label(label: &'static str, colors: Palette) -> Line<'static> {
+    Line::from(Span::styled(
+        label,
+        Style::default()
+            .fg(colors.accent)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn detail_field(label: &'static str, value: String, colors: Palette) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label}: "), Style::default().fg(colors.muted)),
+        Span::raw(value),
+    ])
 }
 
 fn help(
@@ -1448,6 +1559,10 @@ fn centered_art(plant: &Plant, app: &App) -> Text<'static> {
         app.daylight,
         app.settings.display_artifacts,
     );
+    styled_art(&drawing, colors)
+}
+
+fn styled_art(drawing: &str, colors: Palette) -> Text<'static> {
     let width = drawing
         .lines()
         .map(|line| Line::raw(line).width())
@@ -1592,6 +1707,21 @@ mod tests {
         assert!(text.contains(crate::catalog::CATALOG_TITLE));
         assert!(!text.contains("Field Guide"));
         assert!(!text.contains("Custom plant type"));
+
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &mut app))?;
+        let buffer = terminal.backend().buffer();
+        let detail: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(detail.contains("LIGHT & WATER"));
+        assert!(detail.contains("CARE NOTES"));
+        assert!(detail.contains("starting interval"));
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .any(|cell| cell.modifier.contains(Modifier::ITALIC))
+        );
+        assert!(buffer.content().iter().any(|cell| cell.symbol() == "█"));
         Ok(())
     }
 

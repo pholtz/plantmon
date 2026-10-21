@@ -100,6 +100,7 @@ pub enum Mode {
         query: String,
         selected: usize,
         purpose: CatalogPurpose,
+        detail: bool,
     },
     Search {
         value: String,
@@ -389,7 +390,8 @@ impl App {
             return;
         }
         let text_input = match &mode {
-            Mode::Catalog { .. } | Mode::Search { .. } => true,
+            Mode::Catalog { detail, .. } => !detail,
+            Mode::Search { .. } => true,
             Mode::Form(form) => form
                 .fields
                 .get(form.focused)
@@ -671,9 +673,33 @@ impl App {
                 mut query,
                 mut selected,
                 purpose,
+                mut detail,
             } => {
-                let count = self.catalog_matches(&query).len()
-                    + usize::from(purpose == CatalogPurpose::AddPlant);
+                let match_count = self.catalog_matches(&query).len();
+                if detail {
+                    let last = match_count.saturating_sub(1);
+                    match key.code {
+                        KeyCode::Esc => detail = false,
+                        KeyCode::Up | KeyCode::Left | KeyCode::Char('k' | 'h') => {
+                            selected = selected.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Right | KeyCode::Char('j' | 'l') => {
+                            selected = (selected + 1).min(last);
+                        }
+                        KeyCode::PageUp => selected = selected.saturating_sub(10),
+                        KeyCode::PageDown => selected = (selected + 10).min(last),
+                        KeyCode::Home => selected = 0,
+                        KeyCode::End => selected = last,
+                        _ => {}
+                    }
+                    return Ok(Mode::Catalog {
+                        query,
+                        selected,
+                        purpose,
+                        detail,
+                    });
+                }
+                let count = match_count + usize::from(purpose == CatalogPurpose::AddPlant);
                 match key.code {
                     KeyCode::Esc => return Ok(Mode::Browse),
                     KeyCode::Char('n') if ctrl && purpose == CatalogPurpose::AddPlant => {
@@ -687,7 +713,7 @@ impl App {
                     KeyCode::End => selected = count.saturating_sub(1),
                     KeyCode::Enter => {
                         if purpose == CatalogPurpose::AddPlant {
-                            if selected == self.catalog_matches(&query).len() {
+                            if selected == match_count {
                                 return Ok(Mode::Form(custom_form()));
                             }
                             if let Some(taxon) = self.catalog_matches(&query).get(selected) {
@@ -696,6 +722,8 @@ impl App {
                                     None,
                                 )));
                             }
+                        } else if selected < match_count {
+                            detail = true;
                         }
                     }
                     KeyCode::Char('u') if ctrl => {
@@ -718,6 +746,7 @@ impl App {
                     query,
                     selected,
                     purpose,
+                    detail,
                 })
             }
             Mode::Form(mut form) => {
@@ -860,6 +889,7 @@ impl App {
                     query: String::new(),
                     selected: 0,
                     purpose: CatalogPurpose::AddPlant,
+                    detail: false,
                 });
             }
             KeyCode::Char('c') => {
@@ -867,6 +897,7 @@ impl App {
                     query: String::new(),
                     selected: 0,
                     purpose: CatalogPurpose::View,
+                    detail: false,
                 });
             }
             KeyCode::Char('/') => {
@@ -1088,10 +1119,15 @@ impl App {
                 }
             }
             Mode::Catalog {
-                query, selected, ..
+                query,
+                selected,
+                detail,
+                ..
             } => {
-                query.extend(clean.chars().take(1000usize.saturating_sub(query.len())));
-                *selected = 0;
+                if !*detail {
+                    query.extend(clean.chars().take(1000usize.saturating_sub(query.len())));
+                    *selected = 0;
+                }
             }
             Mode::Search { value } => {
                 value.extend(clean.chars().take(1000usize.saturating_sub(value.len())))
@@ -1661,6 +1697,19 @@ mod tests {
             Mode::Catalog {
                 query,
                 purpose: CatalogPurpose::View,
+                detail: true,
+                ..
+            } if query == "hoya"
+        ));
+        app.paste(" ignored");
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(
+            &app.mode,
+            Mode::Catalog {
+                query,
+                selected: 1,
+                detail: false,
                 ..
             } if query == "hoya"
         ));

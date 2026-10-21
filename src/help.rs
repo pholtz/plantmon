@@ -106,7 +106,22 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
             ],
             navigation: "Up / Down or j / k: select a row, or move a picked-up plant. Home / End: first / last. PgUp / PgDn: move by ten.",
         },
-        Mode::Catalog { purpose, .. } => {
+        Mode::Catalog {
+            purpose,
+            detail: catalog_detail,
+            ..
+        } => {
+            if *catalog_detail {
+                return Page {
+                    title: "Catalog detail help",
+                    summary: "Review the selected plant type, its catalog care notes, and growth-habit illustration.".into(),
+                    commands: vec![
+                        command("Esc", "Return to catalog results", Esc),
+                        command("q / Ctrl-C", "Quit plantmon", Char('q')),
+                    ],
+                    navigation: "Arrows / hjkl: previous / next catalog entry. Home / End: first / last. PgUp / PgDn: move by ten.",
+                };
+            }
             let adding = *purpose == CatalogPurpose::AddPlant;
             let mut commands = vec![];
             if adding {
@@ -114,6 +129,8 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
                     command("Enter", "Choose selected type", Enter),
                     control("Ctrl-N", "Create custom plant type", 'n'),
                 ]);
+            } else {
+                commands.push(command("Enter", "Open selected details", Enter));
             }
             commands.extend([
                 control("Ctrl-U", "Clear search", 'u'),
