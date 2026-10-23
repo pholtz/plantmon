@@ -50,7 +50,7 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
                     command("w", "Record watering now", Char('w')),
                     command("r", "Record rotation now", Char('r')),
                     command("f", "Record fertilizing now", Char('f')),
-                    command("i", "Record inspection now", Char('i')),
+                    command("i", "Record structured inspection", Char('i')),
                     command("t", "Adjust care intervals", Char('t')),
                     command("e", "Edit plant details", Char('e')),
                     command("E", "Configure plant environment", Char('E')),
@@ -105,6 +105,29 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
                 ),
             ],
             navigation: "Up / Down or j / k: select a row, or move a picked-up plant. Home / End: first / last. PgUp / PgDn: move by ten.",
+        },
+        Mode::Inspection(_) => Page {
+            title: "Inspection help",
+            summary: "Record one inspection event with one or more structured observations. Findings describe visible signs, not assumed diagnoses.".into(),
+            commands: vec![
+                command("Enter / Space", "Edit or activate selected row", Enter),
+                command("a", "Add a finding", Char('a')),
+                command("d", "Remove selected finding", Char('d')),
+                command("e", "Edit date and overall note", Char('e')),
+                control("Ctrl-S", "Save complete inspection", 's'),
+                command("Esc", "Cancel inspection", Esc),
+            ],
+            navigation: "Up / Down or j / k: select findings and actions. Home / End: first / last row.",
+        },
+        Mode::FindingPicker { .. } => Page {
+            title: "Inspection finding help",
+            summary: "Search observable plant signs by name or category, then add one to the inspection.".into(),
+            commands: vec![
+                command("Enter", "Add selected finding", Enter),
+                control("Ctrl-U", "Clear search", 'u'),
+                command("Esc", "Return to inspection", Esc),
+            ],
+            navigation: "Type to search; q is text here. Up / Down: select. PgUp / PgDn: page results. Home / End: first / last.",
         },
         Mode::Catalog {
             purpose,
@@ -184,9 +207,16 @@ pub fn page(mode: &Mode, detail: bool, has_plant: bool) -> Page {
                 FormAction::EnvironmentSettings => "Environment setup help",
                 FormAction::PlantEnvironment(_) => "Plant environment help",
                 FormAction::LogEnvironment(_) => "Environment log help",
+                FormAction::InspectionDetails(_) => "Inspection details help",
+                FormAction::InspectionFinding { .. } => "Inspection finding help",
             };
             let mut summary = form.hint.clone();
-            if matches!(form.action, FormAction::Log { .. } | FormAction::LogEnvironment(_)) {
+            if matches!(
+                form.action,
+                FormAction::Log { .. }
+                    | FormAction::LogEnvironment(_)
+                    | FormAction::InspectionDetails(_)
+            ) {
                 summary.push_str(" Dates: now, yesterday, 2d, 12h, 30m, YYYY-MM-DD, or YYYY-MM-DD HH:MM. Future times are rejected.");
             }
             let mut commands = vec![control("Ctrl-S", "Save", 's')];

@@ -264,6 +264,277 @@ impl TaskKind {
     }
 }
 
+macro_rules! inspection_enum {
+    (
+        $name:ident {
+            $($variant:ident => ($key:literal, $label:literal)),+ $(,)?
+        }
+    ) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum $name {
+            $($variant),+
+        }
+
+        impl $name {
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub fn key(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $key),+
+                }
+            }
+
+            pub fn label(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $label),+
+                }
+            }
+
+            pub fn parse(value: &str) -> Result<Self> {
+                Self::ALL
+                    .iter()
+                    .copied()
+                    .find(|candidate| candidate.key() == value)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Unknown {}: {value}",
+                        stringify!($name)
+                    ))
+            }
+        }
+    };
+}
+
+inspection_enum! {
+    InspectionFindingKind {
+        NoAdverseSigns => ("no_adverse_signs", "No adverse signs"),
+        NewLeaf => ("new_leaf", "New leaf"),
+        NewShoot => ("new_shoot", "New shoot"),
+        NewBranch => ("new_branch", "New branch"),
+        NewRoot => ("new_root", "New root"),
+        OffsetOrPup => ("offset_or_pup", "Offset / pup"),
+        Budding => ("budding", "Budding"),
+        Flowering => ("flowering", "Flowering"),
+        Fruiting => ("fruiting", "Fruiting"),
+        Recovery => ("recovery", "Recovery / improvement"),
+        LeafYellowing => ("leaf_yellowing", "Leaf yellowing / chlorosis"),
+        LeafBrowning => ("leaf_browning", "Leaf browning / necrosis"),
+        LeafBlackening => ("leaf_blackening", "Leaf blackening"),
+        LeafPalingOrBleaching => ("leaf_paling_or_bleaching", "Leaf paling / bleaching"),
+        LeafSpotsOrLesions => ("leaf_spots_or_lesions", "Leaf spots / lesions"),
+        LeafTipBurn => ("leaf_tip_burn", "Leaf tip burn"),
+        LeafEdgeBurn => ("leaf_edge_burn", "Leaf edge burn"),
+        LeafScorch => ("leaf_scorch", "Leaf scorch"),
+        LeafWiltingOrDrooping => ("leaf_wilting_or_drooping", "Leaf wilting / drooping"),
+        LeafCurlingOrCupping => ("leaf_curling_or_cupping", "Leaf curling / cupping"),
+        LeafShrivelingOrWrinkling => ("leaf_shriveling_or_wrinkling", "Leaf shriveling / wrinkling"),
+        LeafDrop => ("leaf_drop", "Leaf drop"),
+        DistortedGrowth => ("distorted_growth", "Distorted growth"),
+        StuckUnfurling => ("stuck_unfurling", "Stuck unfurling"),
+        EdemaOrBlistering => ("edema_or_blistering", "Edema / blistering"),
+        PhysicalDamage => ("physical_damage", "Physical damage"),
+        Dieback => ("dieback", "Dieback"),
+        StalledGrowth => ("stalled_growth", "Stalled growth"),
+        Etiolation => ("etiolation", "Etiolation / stretching"),
+        WeakOrFloppyGrowth => ("weak_or_floppy_growth", "Weak / floppy growth"),
+        LeaningOrInstability => ("leaning_or_instability", "Leaning / instability"),
+        StemShriveling => ("stem_shriveling", "Stem shriveling"),
+        StemSoftening => ("stem_softening", "Stem softening"),
+        StemLesionOrDiscoloration => ("stem_lesion_or_discoloration", "Stem lesion / discoloration"),
+        StemBreakage => ("stem_breakage", "Stem breakage"),
+        CrownSofteningOrCollapse => ("crown_softening_or_collapse", "Crown softening / collapse"),
+        RootBoundOrCircling => ("root_bound_or_circling", "Root-bound / circling"),
+        RootsExitingPot => ("roots_exiting_pot", "Roots exiting pot"),
+        RootDryOrBrittle => ("root_dry_or_brittle", "Dry / brittle roots"),
+        RootDarkOrMushy => ("root_dark_or_mushy", "Dark / mushy roots"),
+        RootLoss => ("root_loss", "Root loss"),
+        RootDamage => ("root_damage", "Root damage"),
+        AbnormalRootOdor => ("abnormal_root_odor", "Abnormal root odor"),
+        PestObserved => ("pest_observed", "Pest observed"),
+        EggsOrLarvae => ("eggs_or_larvae", "Eggs / larvae"),
+        Webbing => ("webbing", "Webbing"),
+        CottonyResidue => ("cottony_residue", "Cottony residue"),
+        ScaleLikeBumps => ("scale_like_bumps", "Scale-like bumps"),
+        StipplingOrSilvering => ("stippling_or_silvering", "Stippling / silvering"),
+        ChewingOrMining => ("chewing_or_mining", "Chewing / mining"),
+        HoneydewOrStickiness => ("honeydew_or_stickiness", "Honeydew / stickiness"),
+        Frass => ("frass", "Frass"),
+        PowderyGrowth => ("powdery_growth", "Powdery growth"),
+        FuzzyMold => ("fuzzy_mold", "Fuzzy mold"),
+        WaterSoakedTissue => ("water_soaked_tissue", "Water-soaked tissue"),
+        RustLikePustules => ("rust_like_pustules", "Rust-like pustules"),
+        Ooze => ("ooze", "Ooze"),
+        FoulOdor => ("foul_odor", "Foul odor"),
+        SubstrateDry => ("substrate_dry", "Substrate dry"),
+        SubstrateSaturated => ("substrate_saturated", "Substrate saturated"),
+        HydrophobicSubstrate => ("hydrophobic_substrate", "Hydrophobic substrate"),
+        CompactedSubstrate => ("compacted_substrate", "Compacted substrate"),
+        MoldOrAlgae => ("mold_or_algae", "Mold / algae"),
+        FungalFruitingBody => ("fungal_fruiting_body", "Fungal fruiting body"),
+        SaltOrMineralBuildup => ("salt_or_mineral_buildup", "Salt / mineral buildup"),
+        StandingWater => ("standing_water", "Standing water"),
+        PoorDrainage => ("poor_drainage", "Poor drainage"),
+        DamagedContainer => ("damaged_container", "Damaged container"),
+        SupportOrStakingIssue => ("support_or_staking_issue", "Support / staking issue"),
+        BudDrop => ("bud_drop", "Bud drop"),
+        FlowerDrop => ("flower_drop", "Flower drop"),
+        BloomDamage => ("bloom_damage", "Bloom damage"),
+        FruitDamageOrRot => ("fruit_damage_or_rot", "Fruit damage / rot")
+    }
+}
+
+impl InspectionFindingKind {
+    pub fn category(self) -> &'static str {
+        use InspectionFindingKind::*;
+        match self {
+            NoAdverseSigns | NewLeaf | NewShoot | NewBranch | NewRoot | OffsetOrPup | Budding
+            | Flowering | Fruiting | Recovery => "positive",
+            LeafYellowing
+            | LeafBrowning
+            | LeafBlackening
+            | LeafPalingOrBleaching
+            | LeafSpotsOrLesions
+            | LeafTipBurn
+            | LeafEdgeBurn
+            | LeafScorch
+            | LeafWiltingOrDrooping
+            | LeafCurlingOrCupping
+            | LeafShrivelingOrWrinkling
+            | LeafDrop
+            | DistortedGrowth
+            | StuckUnfurling
+            | EdemaOrBlistering
+            | PhysicalDamage
+            | Dieback => "foliage",
+            StalledGrowth
+            | Etiolation
+            | WeakOrFloppyGrowth
+            | LeaningOrInstability
+            | StemShriveling
+            | StemSoftening
+            | StemLesionOrDiscoloration
+            | StemBreakage
+            | CrownSofteningOrCollapse => "growth / stem",
+            RootBoundOrCircling | RootsExitingPot | RootDryOrBrittle | RootDarkOrMushy
+            | RootLoss | RootDamage | AbnormalRootOdor => "roots",
+            PestObserved | EggsOrLarvae | Webbing | CottonyResidue | ScaleLikeBumps
+            | StipplingOrSilvering | ChewingOrMining | HoneydewOrStickiness | Frass
+            | PowderyGrowth | FuzzyMold | WaterSoakedTissue | RustLikePustules | Ooze
+            | FoulOdor => "pest / disease signs",
+            SubstrateDry
+            | SubstrateSaturated
+            | HydrophobicSubstrate
+            | CompactedSubstrate
+            | MoldOrAlgae
+            | FungalFruitingBody
+            | SaltOrMineralBuildup
+            | StandingWater
+            | PoorDrainage
+            | DamagedContainer
+            | SupportOrStakingIssue => "substrate / container",
+            BudDrop | FlowerDrop | BloomDamage | FruitDamageOrRot => "flower / fruit",
+        }
+    }
+
+    pub fn is_concern(self) -> bool {
+        !matches!(
+            self,
+            Self::NoAdverseSigns
+                | Self::NewLeaf
+                | Self::NewShoot
+                | Self::NewBranch
+                | Self::NewRoot
+                | Self::OffsetOrPup
+                | Self::Budding
+                | Self::Flowering
+                | Self::Fruiting
+                | Self::Recovery
+        )
+    }
+}
+
+inspection_enum! {
+    PlantPart {
+        WholePlant => ("whole_plant", "Whole plant"),
+        Leaf => ("leaf", "Leaf"),
+        NewGrowth => ("new_growth", "New growth"),
+        Stem => ("stem", "Stem"),
+        Crown => ("crown", "Crown"),
+        Root => ("root", "Root"),
+        Flower => ("flower", "Flower"),
+        Fruit => ("fruit", "Fruit"),
+        Substrate => ("substrate", "Substrate"),
+        Container => ("container", "Container")
+    }
+}
+
+inspection_enum! {
+    InspectionSeverity {
+        Mild => ("mild", "Mild"),
+        Moderate => ("moderate", "Moderate"),
+        Severe => ("severe", "Severe")
+    }
+}
+
+inspection_enum! {
+    InspectionExtent {
+        Single => ("single", "Single"),
+        Few => ("few", "Few"),
+        Localized => ("localized", "Localized"),
+        Widespread => ("widespread", "Widespread")
+    }
+}
+
+inspection_enum! {
+    InspectionTrend {
+        New => ("new", "New"),
+        Improving => ("improving", "Improving"),
+        Stable => ("stable", "Stable"),
+        Worsening => ("worsening", "Worsening"),
+        Resolved => ("resolved", "Resolved")
+    }
+}
+
+inspection_enum! {
+    PestKind {
+        Unknown => ("unknown", "Unknown pest"),
+        Aphid => ("aphid", "Aphid"),
+        Mealybug => ("mealybug", "Mealybug"),
+        RootMealybug => ("root_mealybug", "Root mealybug"),
+        Scale => ("scale", "Scale"),
+        SpiderMite => ("spider_mite", "Spider mite"),
+        Thrips => ("thrips", "Thrips"),
+        Whitefly => ("whitefly", "Whitefly"),
+        FungusGnat => ("fungus_gnat", "Fungus gnat"),
+        Caterpillar => ("caterpillar", "Caterpillar"),
+        BeetleOrWeevil => ("beetle_or_weevil", "Beetle / weevil"),
+        SnailOrSlug => ("snail_or_slug", "Snail / slug"),
+        Other => ("other", "Other")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectionFindingInput {
+    pub kind: InspectionFindingKind,
+    pub part: Option<PlantPart>,
+    pub severity: Option<InspectionSeverity>,
+    pub extent: Option<InspectionExtent>,
+    pub trend: InspectionTrend,
+    pub pest: Option<PestKind>,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectionFinding {
+    pub id: i64,
+    pub kind: InspectionFindingKind,
+    pub part: Option<PlantPart>,
+    pub severity: Option<InspectionSeverity>,
+    pub extent: Option<InspectionExtent>,
+    pub trend: InspectionTrend,
+    pub pest: Option<PestKind>,
+    pub note: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Schedule {
     pub kind: TaskKind,
@@ -360,6 +631,7 @@ pub struct Maintenance {
     pub kind: TaskKind,
     pub occurred_at: i64,
     pub note: String,
+    pub findings: Vec<InspectionFinding>,
 }
 
 pub fn now() -> i64 {

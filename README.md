@@ -84,7 +84,8 @@ The original action-specific shortcuts remain available:
 | `o` | Reorder the greenhouse in a keyboard-controlled list |
 | `d` | Toggle plants with due care reminders only |
 | `w` | Record watering **now** |
-| `r` / `f` / `i` | Record rotation / fertilizing / inspection **now** |
+| `r` / `f` | Record rotation / fertilizing **now** |
+| `i` | Record a structured inspection with one or more findings |
 | `W` / `m` | Log any maintenance with an optional date and note |
 | `t` | Set individual care intervals; **0 disables** a task |
 | `e` | Edit nickname, location, acquired date, pot, substrate, tags, notes |
@@ -186,6 +187,21 @@ are rejected. Old entries are inserted into the journal in actual-time order.
 Timers always use the **latest actual completion**, so entering a forgotten older
 watering does not overwrite a more recent one. Undo removes the last *entered*
 event for that plant, even when that entry was backdated, and recalculates timers.
+
+### Structured inspections
+
+Press `i` to record an inspection containing one or more observable findings.
+Inspections start with **No adverse signs** selected; adding a concern removes that
+default. Search the finding catalog with `a`, then classify an observation with an
+optional plant part, severity, extent, trend, pest identity, and note. Positive
+growth, foliage symptoms, stems, roots, pests and disease signs, substrate,
+containers, flowers, and fruit are represented by stable enum-like keys in SQLite.
+
+The editor supports multiple findings in one inspection. Select a finding and press
+Enter to edit it, `d` to remove it, `e` to edit the date or overall note, and Ctrl-S
+to save everything in one transaction. The journal distinguishes positive findings
+from concerns while retaining the original overall note. These records describe
+what was observed; they do not claim a diagnosis or prescribe treatment.
 
 ## Care model
 
@@ -318,13 +334,20 @@ of your configured database path. It never seeds examples into your real garden.
 
 To back up, quit all plantmon instances and copy the `.sqlite3` file. While the app is
 running, use SQLite's backup API / the `sqlite3` CLI `.backup` command; do not copy only
-the main file while WAL transactions are active. Schema version **4** is recorded in
+the main file while WAL transactions are active. Schema version **5** is recorded in
 `PRAGMA user_version`; newer unsupported schemas are refused before modification. The
 version-1 upgrade adds settings, version 3 adds display order, and version 4 additively
-adds per-plant environment configuration and timestamped readings. Plant deletion cascades
-to that plant's environment row and plant-scoped readings; home readings remain. Clearing
-a profile field deletes its setting, while disabling assessments retains every input.
-Keep a backup before any schema upgrade.
+adds per-plant environment configuration and timestamped readings. Version 5 adds
+structured findings attached to inspection maintenance events. Plant deletion cascades
+to that plant's findings, environment row, and plant-scoped readings; home readings
+remain. Clearing a profile field deletes its setting, while disabling assessments
+retains every input. Keep a backup before any schema upgrade.
+
+Rollback from schema 5 to a schema-4 binary is additive-safe: stop all instances,
+back up the database, then run
+`sqlite3 /path/to/garden.sqlite3 'PRAGMA user_version = 4;'`. The old binary still
+shows each inspection event and its overall note but ignores its structured findings.
+Returning to a schema-5 binary makes those findings visible again.
 
 Rollback from schema 4 to a schema-3 binary is additive-safe: stop all instances, back up
 the database, then run
@@ -344,7 +367,8 @@ cargo fmt --check
 
 Regression coverage includes out-of-order/backdated care, undo, disabled timers,
 restart and settings persistence, manual greenhouse ordering, additive migration,
-invalid form preservation, selection through regrouping and due-only filtering,
-catalog validation, arrow/Enter-only entry, help state restoration, responsive
-headers and minimal footers, theme rendering, daylight boundaries, artifact
-frequency / foliage preservation, and dialogs from 20×5 to 120×40.
+structured multi-finding inspections, invalid form preservation, selection through
+regrouping and due-only filtering, catalog validation, arrow/Enter-only entry, help
+state restoration, responsive headers and minimal footers, theme rendering, daylight
+boundaries, artifact frequency / foliage preservation, and dialogs from 20×5 to
+120×40.

@@ -1,5 +1,5 @@
 use crate::{
-    app::{App, CatalogPurpose, ConfirmAction, Form, HelpTab, Mode},
+    app::{App, CatalogPurpose, ConfirmAction, Form, HelpTab, InspectionEditor, Mode},
     art,
     health::{self, MetricAssessment, Status},
     knowledge::NumericTarget,
@@ -146,6 +146,10 @@ fn modal(frame: &mut Frame, app: &App, area: Rect, mode: &Mode) {
             selected,
             before_move,
         } => reorder(frame, app, area, order, *selected, before_move.is_some()),
+        Mode::Inspection(editor) => inspection_editor(frame, app, area, editor),
+        Mode::FindingPicker {
+            query, selected, ..
+        } => finding_picker(frame, app, area, query, *selected),
         Mode::Catalog {
             query,
             selected,
@@ -350,6 +354,185 @@ fn reorder(frame: &mut Frame, app: &App, area: Rect, order: &[i64], selected: us
         ))
         .style(Style::default().fg(colors.muted))
         .wrap(Wrap { trim: false }),
+        parts[2],
+    );
+}
+
+fn inspection_editor(frame: &mut Frame, app: &App, area: Rect, editor: &InspectionEditor) {
+    let colors = app.settings.theme.palette();
+    let inner = popup(
+        frame,
+        area,
+        106,
+        38,
+        &format!(" Inspection · {} ", editor.draft.plant_name),
+        colors,
+    );
+    let parts = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Min(2),
+        Constraint::Length(2),
+    ])
+    .split(inner);
+    let summary = if app.error {
+        app.toast.clone()
+    } else {
+        format!(
+            "When: {} · {} finding{}\nOverall note: {}",
+            editor.draft.when,
+            editor.draft.findings.len(),
+            if editor.draft.findings.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            if editor.draft.note.is_empty() {
+                "—"
+            } else {
+                &editor.draft.note
+            }
+        )
+    };
+    frame.render_widget(
+        Paragraph::new(summary)
+            .style(Style::default().fg(if app.error {
+                colors.error
+            } else {
+                colors.muted
+            }))
+            .wrap(Wrap { trim: false }),
+        parts[0],
+    );
+
+    let mut rows = editor
+        .draft
+        .findings
+        .iter()
+        .map(|finding| {
+            let mut attributes = vec![
+                finding.kind.category().to_string(),
+                format!("trend: {}", finding.trend.label()),
+            ];
+            if let Some(part) = finding.part {
+                attributes.push(part.label().to_string());
+            }
+            if let Some(severity) = finding.severity {
+                attributes.push(severity.label().to_string());
+            }
+            if let Some(extent) = finding.extent {
+                attributes.push(extent.label().to_string());
+            }
+            if let Some(pest) = finding.pest {
+                attributes.push(pest.label().to_string());
+            }
+            let description = if finding.note.is_empty() {
+                attributes.join(" · ")
+            } else {
+                format!("{}\n{}", attributes.join(" · "), finding.note)
+            };
+            Row::new([finding.kind.label().to_string(), description])
+                .height(if finding.note.is_empty() { 1 } else { 2 })
+        })
+        .collect::<Vec<_>>();
+    rows.extend([
+        Row::new([
+            "+ Add finding".to_string(),
+            "Search the observation list".to_string(),
+        ]),
+        Row::new([
+            "Date / overall note".to_string(),
+            "Edit inspection-wide details".to_string(),
+        ]),
+        Row::new([
+            "Save inspection".to_string(),
+            "Write the event and all findings".to_string(),
+        ]),
+        Row::new(["Cancel".to_string(), "Discard this inspection".to_string()]),
+    ]);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length((inner.width / 3).clamp(20, 34)),
+            Constraint::Min(1),
+        ],
+    )
+    .column_spacing(1)
+    .highlight_symbol("› ")
+    .row_highlight_style(
+        Style::default()
+            .fg(colors.accent)
+            .bg(colors.border)
+            .add_modifier(Modifier::BOLD),
+    );
+    frame.render_stateful_widget(
+        table,
+        parts[1],
+        &mut TableState::default().with_selected(Some(editor.focused)),
+    );
+    frame.render_widget(
+        Paragraph::new(
+            "↑↓ select · Enter edit/activate · a add · d remove · e date/note · Ctrl-S save · Esc cancel",
+        )
+        .style(Style::default().fg(colors.accent))
+        .wrap(Wrap { trim: false }),
+        parts[2],
+    );
+}
+
+fn finding_picker(frame: &mut Frame, app: &App, area: Rect, query: &str, selected: usize) {
+    let colors = app.settings.theme.palette();
+    let inner = popup(frame, area, 88, 38, " Add inspection finding ", colors);
+    let parts = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(1),
+        Constraint::Length(2),
+    ])
+    .split(inner);
+    let matches = app.inspection_finding_matches(query);
+    frame.render_widget(
+        Paragraph::new(format!("Search: {query}▏\n{} matches", matches.len()))
+            .style(Style::default().fg(colors.accent)),
+        parts[0],
+    );
+    let count = (parts[1].height as usize / 2).max(1);
+    let start = selected.min(matches.len().saturating_sub(1)) / count * count;
+    let lines = matches
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(count)
+        .flat_map(|(index, kind)| {
+            let focused = index == selected;
+            [
+                Line::from(Span::styled(
+                    format!("{} {}", if focused { "›" } else { " " }, kind.label()),
+                    Style::default()
+                        .fg(if focused { colors.accent } else { colors.text })
+                        .add_modifier(if focused {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )),
+                Line::from(Span::styled(
+                    format!("  {}", kind.category()),
+                    Style::default().fg(colors.muted),
+                )),
+            ]
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(if lines.is_empty() {
+            vec![Line::raw("No matching findings.")]
+        } else {
+            lines
+        }),
+        parts[1],
+    );
+    frame.render_widget(
+        Paragraph::new("Type to search · ↑↓ / PgUp/PgDn choose · Enter add · Esc return")
+            .style(Style::default().fg(colors.muted))
+            .wrap(Wrap { trim: false }),
         parts[2],
     );
 }
@@ -664,6 +847,55 @@ fn detail(frame: &mut Frame, app: &mut App, area: Rect) {
             model::date(event.occurred_at),
             event.kind.key()
         )));
+        for finding in &event.findings {
+            let mut context = vec![finding.trend.label().to_string()];
+            if let Some(part) = finding.part {
+                context.push(part.label().to_string());
+            }
+            if let Some(severity) = finding.severity {
+                context.push(severity.label().to_string());
+            }
+            if let Some(extent) = finding.extent {
+                context.push(extent.label().to_string());
+            }
+            if let Some(pest) = finding.pest {
+                context.push(pest.label().to_string());
+            }
+            care.push(Line::from(vec![
+                Span::styled(
+                    if finding.kind.is_concern() {
+                        "  ! "
+                    } else {
+                        "  + "
+                    },
+                    Style::default().fg(if finding.kind.is_concern() {
+                        colors.warning
+                    } else {
+                        colors.accent
+                    }),
+                ),
+                Span::styled(
+                    finding.kind.label().to_string(),
+                    Style::default()
+                        .fg(if finding.kind.is_concern() {
+                            colors.warning
+                        } else {
+                            colors.accent
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" · {}", context.join(" · ")),
+                    Style::default().fg(colors.muted),
+                ),
+            ]));
+            if !finding.note.is_empty() {
+                care.push(Line::from(Span::styled(
+                    format!("      {}", finding.note),
+                    Style::default().fg(colors.muted),
+                )));
+            }
+        }
         if !event.note.is_empty() {
             care.push(Line::from(Span::styled(
                 format!("  {}", event.note),
@@ -1614,6 +1846,10 @@ mod tests {
                 KeyCode::Char('m'),
                 KeyCode::Tab,
                 KeyCode::Esc,
+                KeyCode::Char('i'),
+                KeyCode::Char('a'),
+                KeyCode::Esc,
+                KeyCode::Esc,
                 KeyCode::Char('t'),
                 KeyCode::Esc,
                 KeyCode::Char('e'),
@@ -1657,6 +1893,10 @@ mod tests {
                 (KeyCode::Char('c'), "Catalog help"),
                 (KeyCode::Esc, "Specimen help"),
                 (KeyCode::Char('m'), "Maintenance help"),
+                (KeyCode::Esc, "Specimen help"),
+                (KeyCode::Char('i'), "Inspection help"),
+                (KeyCode::Char('a'), "Inspection finding help"),
+                (KeyCode::Esc, "Inspection help"),
                 (KeyCode::Esc, "Specimen help"),
                 (KeyCode::Char('t'), "Care intervals help"),
                 (KeyCode::Esc, "Specimen help"),

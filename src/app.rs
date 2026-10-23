@@ -4,7 +4,9 @@ use crate::{
     knowledge::EnvironmentalRequirements,
     model::{
         self, EnvironmentReadingInput, EnvironmentScope, EnvironmentSnapshot, EnvironmentSource,
-        Maintenance, Plant, PlantEnvironment, SunExposure, TaskKind, Taxon,
+        InspectionExtent, InspectionFindingInput, InspectionFindingKind, InspectionSeverity,
+        InspectionTrend, Maintenance, PestKind, Plant, PlantEnvironment, PlantPart, SunExposure,
+        TaskKind, Taxon,
     },
     settings::{HomeEnvironment, Settings, TemperatureUnit},
 };
@@ -17,6 +19,38 @@ use std::{
 
 const NOTIFICATION_DURATION: Duration = Duration::from_secs(5);
 const SETTINGS_COUNT: usize = 4;
+const PART_CHOICES: &[&str] = &[
+    "not_set",
+    "whole_plant",
+    "leaf",
+    "new_growth",
+    "stem",
+    "crown",
+    "root",
+    "flower",
+    "fruit",
+    "substrate",
+    "container",
+];
+const SEVERITY_CHOICES: &[&str] = &["not_set", "mild", "moderate", "severe"];
+const EXTENT_CHOICES: &[&str] = &["not_set", "single", "few", "localized", "widespread"];
+const TREND_CHOICES: &[&str] = &["new", "improving", "stable", "worsening", "resolved"];
+const PEST_CHOICES: &[&str] = &[
+    "not_set",
+    "unknown",
+    "aphid",
+    "mealybug",
+    "root_mealybug",
+    "scale",
+    "spider_mite",
+    "thrips",
+    "whitefly",
+    "fungus_gnat",
+    "caterpillar",
+    "beetle_or_weevil",
+    "snail_or_slug",
+    "other",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Grouping {
@@ -110,6 +144,12 @@ pub enum Mode {
         selected: usize,
         before_move: Option<Vec<i64>>,
     },
+    Inspection(InspectionEditor),
+    FindingPicker {
+        editor: Box<InspectionEditor>,
+        query: String,
+        selected: usize,
+    },
     Form(Form),
     Help {
         previous: Box<Mode>,
@@ -132,11 +172,68 @@ pub enum FormAction {
     Add(Box<Taxon>),
     Edit(i64),
     Schedules(i64),
-    Log { plant: i64, kind: TaskKind },
+    Log {
+        plant: i64,
+        kind: TaskKind,
+    },
     EnvironmentSettings,
     PlantEnvironment(i64),
     LogEnvironment(i64),
+    InspectionDetails(Box<InspectionEditor>),
+    InspectionFinding {
+        editor: Box<InspectionEditor>,
+        kind: InspectionFindingKind,
+        index: Option<usize>,
+    },
     Custom,
+}
+
+#[derive(Clone)]
+pub struct InspectionDraft {
+    pub plant: i64,
+    pub plant_name: String,
+    pub when: String,
+    pub note: String,
+    pub findings: Vec<InspectionFindingInput>,
+}
+
+#[derive(Clone)]
+pub struct InspectionEditor {
+    pub draft: InspectionDraft,
+    pub focused: usize,
+}
+
+impl InspectionEditor {
+    fn new(plant: i64, plant_name: String) -> Self {
+        Self {
+            draft: InspectionDraft {
+                plant,
+                plant_name,
+                when: "now".into(),
+                note: String::new(),
+                findings: vec![default_inspection_finding(
+                    InspectionFindingKind::NoAdverseSigns,
+                )],
+            },
+            focused: 0,
+        }
+    }
+
+    pub fn add_index(&self) -> usize {
+        self.draft.findings.len()
+    }
+
+    pub fn details_index(&self) -> usize {
+        self.add_index() + 1
+    }
+
+    pub fn save_index(&self) -> usize {
+        self.add_index() + 2
+    }
+
+    pub fn cancel_index(&self) -> usize {
+        self.add_index() + 3
+    }
 }
 pub struct Field {
     pub label: &'static str,
@@ -182,6 +279,11 @@ impl Form {
                         "full_sun",
                     ][..],
                     (FormAction::LogEnvironment(_), 0) => &["plant", "home"][..],
+                    (FormAction::InspectionFinding { .. }, 0) => PART_CHOICES,
+                    (FormAction::InspectionFinding { .. }, 1) => SEVERITY_CHOICES,
+                    (FormAction::InspectionFinding { .. }, 2) => EXTENT_CHOICES,
+                    (FormAction::InspectionFinding { .. }, 3) => TREND_CHOICES,
+                    (FormAction::InspectionFinding { .. }, 4) => PEST_CHOICES,
                     (FormAction::Custom, 6) => crate::art::HABITS,
                     _ => &[],
                 };
@@ -295,6 +397,19 @@ impl App {
         self.taxa.iter().filter(|t| t.matches(query)).collect()
     }
 
+    pub fn inspection_finding_matches(&self, query: &str) -> Vec<InspectionFindingKind> {
+        let words = query.to_lowercase();
+        InspectionFindingKind::ALL
+            .iter()
+            .copied()
+            .filter(|kind| {
+                let haystack =
+                    format!("{} {} {}", kind.key(), kind.label(), kind.category()).to_lowercase();
+                words.split_whitespace().all(|word| haystack.contains(word))
+            })
+            .collect()
+    }
+
     pub fn refilter(&mut self) {
         let selected_id = self.selected_plant().map(|p| p.id);
         self.visible = (0..self.plants.len())
@@ -391,7 +506,7 @@ impl App {
         }
         let text_input = match &mode {
             Mode::Catalog { detail, .. } => !detail,
-            Mode::Search { .. } => true,
+            Mode::Search { .. } | Mode::FindingPicker { .. } => true,
             Mode::Form(form) => form
                 .fields
                 .get(form.focused)
@@ -521,6 +636,112 @@ impl App {
                     offset,
                     tab,
                     setting,
+                })
+            }
+            Mode::Inspection(mut editor) => {
+                let last = editor.cancel_index();
+                match key.code {
+                    KeyCode::Esc => return Ok(Mode::Browse),
+                    KeyCode::Char('s') if ctrl => {
+                        return Ok(self.submit_inspection(editor));
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        editor.focused = editor.focused.saturating_sub(1)
+                    }
+                    KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                        editor.focused = (editor.focused + 1).min(last)
+                    }
+                    KeyCode::BackTab => editor.focused = editor.focused.saturating_sub(1),
+                    KeyCode::Home => editor.focused = 0,
+                    KeyCode::End => editor.focused = last,
+                    KeyCode::Char('a') => {
+                        return Ok(Mode::FindingPicker {
+                            editor: Box::new(editor),
+                            query: String::new(),
+                            selected: 0,
+                        });
+                    }
+                    KeyCode::Char('e') => {
+                        return Ok(Mode::Form(inspection_details_form(editor)));
+                    }
+                    KeyCode::Char('d') if editor.focused < editor.draft.findings.len() => {
+                        editor.draft.findings.remove(editor.focused);
+                        editor.focused = editor.focused.min(editor.cancel_index());
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        if editor.focused < editor.draft.findings.len() {
+                            let index = editor.focused;
+                            let kind = editor.draft.findings[index].kind;
+                            return Ok(Mode::Form(inspection_finding_form(
+                                editor,
+                                kind,
+                                Some(index),
+                            )));
+                        }
+                        if editor.focused == editor.add_index() {
+                            return Ok(Mode::FindingPicker {
+                                editor: Box::new(editor),
+                                query: String::new(),
+                                selected: 0,
+                            });
+                        }
+                        if editor.focused == editor.details_index() {
+                            return Ok(Mode::Form(inspection_details_form(editor)));
+                        }
+                        if editor.focused == editor.save_index() {
+                            return Ok(self.submit_inspection(editor));
+                        }
+                        if editor.focused == editor.cancel_index() {
+                            return Ok(Mode::Browse);
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(Mode::Inspection(editor))
+            }
+            Mode::FindingPicker {
+                editor,
+                mut query,
+                mut selected,
+            } => {
+                let count = self.inspection_finding_matches(&query).len();
+                match key.code {
+                    KeyCode::Esc => return Ok(Mode::Inspection(*editor)),
+                    KeyCode::Up => selected = selected.saturating_sub(1),
+                    KeyCode::Down => selected = (selected + 1).min(count.saturating_sub(1)),
+                    KeyCode::PageUp => selected = selected.saturating_sub(10),
+                    KeyCode::PageDown => selected = (selected + 10).min(count.saturating_sub(1)),
+                    KeyCode::Home => selected = 0,
+                    KeyCode::End => selected = count.saturating_sub(1),
+                    KeyCode::Enter => {
+                        if let Some(kind) = self
+                            .inspection_finding_matches(&query)
+                            .get(selected)
+                            .copied()
+                        {
+                            return Ok(Mode::Form(inspection_finding_form(*editor, kind, None)));
+                        }
+                    }
+                    KeyCode::Char('u') if ctrl => {
+                        query.clear();
+                        selected = 0;
+                    }
+                    KeyCode::Backspace => {
+                        query.pop();
+                        selected = 0;
+                    }
+                    KeyCode::Char(character) if !ctrl => {
+                        if query.len() < 1000 {
+                            query.push(character);
+                            selected = 0;
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(Mode::FindingPicker {
+                    editor,
+                    query,
+                    selected,
                 })
             }
             Mode::Reorder {
@@ -974,7 +1195,14 @@ impl App {
             KeyCode::Char('w') => self.quick_log(TaskKind::Water)?,
             KeyCode::Char('r') => self.quick_log(TaskKind::Rotate)?,
             KeyCode::Char('f') => self.quick_log(TaskKind::Fertilize)?,
-            KeyCode::Char('i') => self.quick_log(TaskKind::Inspect)?,
+            KeyCode::Char('i') => {
+                if let Some(plant) = self.selected_plant() {
+                    return Ok(Mode::Inspection(InspectionEditor::new(
+                        plant.id,
+                        plant.name().to_string(),
+                    )));
+                }
+            }
             KeyCode::Char('m') | KeyCode::Char('W') => {
                 if let Some(p) = self.selected_plant() {
                     return Ok(Mode::Form(Form::new(
@@ -1096,6 +1324,46 @@ impl App {
         }
     }
 
+    fn submit_inspection(&mut self, editor: InspectionEditor) -> Mode {
+        let when = match model::parse_when(&editor.draft.when, self.now) {
+            Ok(when) => when,
+            Err(error) => {
+                self.notify(format!("{error:#}"), true);
+                return Mode::Inspection(editor);
+            }
+        };
+        if let Err(error) = self.db.log_inspection(
+            editor.draft.plant,
+            when,
+            &editor.draft.note,
+            &editor.draft.findings,
+            self.now,
+        ) {
+            self.notify(format!("{error:#}"), true);
+            return Mode::Inspection(editor);
+        }
+        if let Err(error) = self.reload() {
+            self.notify(
+                format!("Inspection saved, but the collection could not reload: {error:#}"),
+                true,
+            );
+        } else {
+            self.notify(
+                format!(
+                    "Recorded inspection with {} structured finding{}.",
+                    editor.draft.findings.len(),
+                    if editor.draft.findings.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
+                ),
+                false,
+            );
+        }
+        Mode::Browse
+    }
+
     pub fn paste(&mut self, text: &str) {
         let clean: String = text
             .chars()
@@ -1131,6 +1399,12 @@ impl App {
             }
             Mode::Search { value } => {
                 value.extend(clean.chars().take(1000usize.saturating_sub(value.len())))
+            }
+            Mode::FindingPicker {
+                query, selected, ..
+            } => {
+                query.extend(clean.chars().take(1000usize.saturating_sub(query.len())));
+                *selected = 0;
             }
             _ => {}
         }
@@ -1181,6 +1455,18 @@ impl App {
                     TaskKind::parse(&v[0].to_lowercase())?
                 };
                 let when = model::parse_when(&v[1], self.now)?;
+                if kind == TaskKind::Inspect {
+                    let plant_name = self
+                        .plants
+                        .iter()
+                        .find(|candidate| candidate.id == *plant)
+                        .map(|candidate| candidate.name().to_string())
+                        .unwrap_or_else(|| format!("Plant {plant}"));
+                    let mut editor = InspectionEditor::new(*plant, plant_name);
+                    editor.draft.when = v[1].clone();
+                    editor.draft.note = v[2].clone();
+                    return Ok(Mode::Inspection(editor));
+                }
                 self.db.log(*plant, kind, when, &v[2], self.now)?;
                 self.reload()?;
                 self.notify(format!("Recorded {} · {}. Timers use the latest actual completion, not entry order.", kind.key(), model::date(when)), false);
@@ -1279,6 +1565,56 @@ impl App {
                 self.reload()?;
                 self.notify("Environment snapshot recorded.", false);
             }
+            FormAction::InspectionDetails(editor) => {
+                model::parse_when(&v[0], self.now)?;
+                let mut editor = editor.as_ref().clone();
+                editor.draft.when = v[0].clone();
+                editor.draft.note = v[1].clone();
+                editor.focused = editor.details_index();
+                return Ok(Mode::Inspection(editor));
+            }
+            FormAction::InspectionFinding {
+                editor,
+                kind,
+                index,
+            } => {
+                let finding = InspectionFindingInput {
+                    kind: *kind,
+                    part: parse_optional_choice(&v[0], PlantPart::parse)?,
+                    severity: parse_optional_choice(&v[1], InspectionSeverity::parse)?,
+                    extent: parse_optional_choice(&v[2], InspectionExtent::parse)?,
+                    trend: InspectionTrend::parse(&v[3])?,
+                    pest: parse_optional_choice(&v[4], PestKind::parse)?,
+                    note: v[5].clone(),
+                };
+                let mut editor = editor.as_ref().clone();
+                if let Some(index) = index {
+                    editor.draft.findings[*index] = finding;
+                    editor.focused = *index;
+                } else {
+                    if kind.is_concern() {
+                        editor.draft.findings.retain(|existing| {
+                            existing.kind != InspectionFindingKind::NoAdverseSigns
+                        });
+                    }
+                    editor.draft.findings.push(finding);
+                    editor.focused = editor.draft.findings.len() - 1;
+                }
+                if editor
+                    .draft
+                    .findings
+                    .iter()
+                    .any(|finding| finding.kind == InspectionFindingKind::NoAdverseSigns)
+                    && editor
+                        .draft
+                        .findings
+                        .iter()
+                        .any(|finding| finding.kind.is_concern())
+                {
+                    bail!("No adverse signs cannot be combined with a concern");
+                }
+                return Ok(Mode::Inspection(editor));
+            }
             FormAction::Custom => {
                 if !crate::art::HABITS.contains(&v[6].as_str()) {
                     bail!("Habit must be: {}", crate::art::HABITS.join(", "));
@@ -1309,6 +1645,148 @@ impl App {
         }
         Ok(form.return_to.take().map_or(Mode::Browse, |mode| *mode))
     }
+}
+
+fn parse_optional_choice<T>(value: &str, parse: fn(&str) -> Result<T>) -> Result<Option<T>> {
+    match value {
+        "" | "not_set" | "not set" => Ok(None),
+        value => parse(value).map(Some),
+    }
+}
+
+fn default_inspection_finding(kind: InspectionFindingKind) -> InspectionFindingInput {
+    use InspectionFindingKind::*;
+    let part = match kind {
+        NewLeaf
+        | LeafYellowing
+        | LeafBrowning
+        | LeafBlackening
+        | LeafPalingOrBleaching
+        | LeafSpotsOrLesions
+        | LeafTipBurn
+        | LeafEdgeBurn
+        | LeafScorch
+        | LeafWiltingOrDrooping
+        | LeafCurlingOrCupping
+        | LeafShrivelingOrWrinkling
+        | LeafDrop
+        | StuckUnfurling
+        | EdemaOrBlistering => Some(PlantPart::Leaf),
+        NewShoot | NewBranch | DistortedGrowth | StalledGrowth | Etiolation
+        | WeakOrFloppyGrowth => Some(PlantPart::NewGrowth),
+        StemShriveling | StemSoftening | StemLesionOrDiscoloration | StemBreakage => {
+            Some(PlantPart::Stem)
+        }
+        CrownSofteningOrCollapse => Some(PlantPart::Crown),
+        NewRoot | RootBoundOrCircling | RootsExitingPot | RootDryOrBrittle | RootDarkOrMushy
+        | RootLoss | RootDamage | AbnormalRootOdor => Some(PlantPart::Root),
+        Budding | Flowering | BudDrop | FlowerDrop | BloomDamage => Some(PlantPart::Flower),
+        Fruiting | FruitDamageOrRot => Some(PlantPart::Fruit),
+        SubstrateDry | SubstrateSaturated | HydrophobicSubstrate | CompactedSubstrate
+        | MoldOrAlgae | FungalFruitingBody | SaltOrMineralBuildup | StandingWater
+        | PoorDrainage => Some(PlantPart::Substrate),
+        DamagedContainer => Some(PlantPart::Container),
+        NoAdverseSigns
+        | OffsetOrPup
+        | Recovery
+        | PhysicalDamage
+        | Dieback
+        | LeaningOrInstability
+        | PestObserved
+        | EggsOrLarvae
+        | Webbing
+        | CottonyResidue
+        | ScaleLikeBumps
+        | StipplingOrSilvering
+        | ChewingOrMining
+        | HoneydewOrStickiness
+        | Frass
+        | PowderyGrowth
+        | FuzzyMold
+        | WaterSoakedTissue
+        | RustLikePustules
+        | Ooze
+        | FoulOdor
+        | SupportOrStakingIssue => None,
+    };
+    InspectionFindingInput {
+        kind,
+        part,
+        severity: None,
+        extent: None,
+        trend: InspectionTrend::New,
+        pest: (kind == InspectionFindingKind::PestObserved).then_some(PestKind::Unknown),
+        note: String::new(),
+    }
+}
+
+fn inspection_details_form(editor: InspectionEditor) -> Form {
+    let previous = Mode::Inspection(editor.clone());
+    let fields = vec![
+        ("When", editor.draft.when.clone()),
+        ("Overall note (optional)", editor.draft.note.clone()),
+    ];
+    Form::new(
+        format!("Inspection details · {}", editor.draft.plant_name),
+        "Set the observation time and an optional note applying to the whole inspection.",
+        FormAction::InspectionDetails(Box::new(editor)),
+        fields,
+    )
+    .returning_to(previous)
+}
+
+fn inspection_finding_form(
+    editor: InspectionEditor,
+    kind: InspectionFindingKind,
+    index: Option<usize>,
+) -> Form {
+    let finding = index
+        .and_then(|index| editor.draft.findings.get(index).cloned())
+        .unwrap_or_else(|| default_inspection_finding(kind));
+    let previous = Mode::Inspection(editor.clone());
+    let title = format!(
+        "{} finding · {}",
+        if index.is_some() { "Edit" } else { "Add" },
+        kind.label()
+    );
+    Form::new(
+        title,
+        "Classify only what was observed. Cause and treatment can remain unknown.",
+        FormAction::InspectionFinding {
+            editor: Box::new(editor),
+            kind,
+            index,
+        },
+        vec![
+            (
+                "Plant part (optional)",
+                finding.part.map(PlantPart::key).unwrap_or("not_set").into(),
+            ),
+            (
+                "Severity (optional)",
+                finding
+                    .severity
+                    .map(InspectionSeverity::key)
+                    .unwrap_or("not_set")
+                    .into(),
+            ),
+            (
+                "Extent (optional)",
+                finding
+                    .extent
+                    .map(InspectionExtent::key)
+                    .unwrap_or("not_set")
+                    .into(),
+            ),
+            ("Trend", finding.trend.key().into()),
+            (
+                "Pest identity (optional)",
+                finding.pest.map(PestKind::key).unwrap_or("not_set").into(),
+            ),
+            ("Finding note (optional)", finding.note),
+        ],
+    )
+    .returning_to(previous)
 }
 
 fn input(values: &[String]) -> PlantInput {
@@ -1715,6 +2193,64 @@ mod tests {
         ));
         press(&mut app, KeyCode::Esc);
         assert!(matches!(app.mode, Mode::Browse));
+        Ok(())
+    }
+
+    #[test]
+    fn inspection_editor_saves_multiple_structured_fields() -> Result<()> {
+        let mut app = App::new(crate::demo_database()?)?;
+        press(&mut app, KeyCode::Char('i'));
+        assert!(matches!(
+            &app.mode,
+            Mode::Inspection(editor)
+                if editor.draft.findings[0].kind == InspectionFindingKind::NoAdverseSigns
+        ));
+
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "leaf browning");
+        press(&mut app, KeyCode::Enter);
+        let Mode::Form(form) = &mut app.mode else {
+            panic!("finding form did not open");
+        };
+        form.fields[1].value = "moderate".into();
+        form.fields[2].value = "localized".into();
+        form.fields[5].value = "oldest leaf".into();
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let Mode::Inspection(editor) = &app.mode else {
+            panic!("inspection editor did not return");
+        };
+        assert_eq!(editor.draft.findings.len(), 1);
+        assert_eq!(
+            editor.draft.findings[0].kind,
+            InspectionFindingKind::LeafBrowning
+        );
+
+        press(&mut app, KeyCode::Char('e'));
+        let Mode::Form(form) = &mut app.mode else {
+            panic!("inspection details did not open");
+        };
+        form.fields[0].value = "yesterday".into();
+        form.fields[1].value = "weekly check".into();
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+
+        assert!(matches!(app.mode, Mode::Browse));
+        let inspection = app
+            .history
+            .iter()
+            .find(|event| event.kind == TaskKind::Inspect)
+            .expect("inspection history");
+        assert_eq!(inspection.note, "weekly check");
+        assert_eq!(inspection.findings.len(), 1);
+        assert_eq!(
+            inspection.findings[0].severity,
+            Some(InspectionSeverity::Moderate)
+        );
+        assert_eq!(
+            inspection.findings[0].extent,
+            Some(InspectionExtent::Localized)
+        );
+        assert_eq!(inspection.findings[0].note, "oldest leaf");
         Ok(())
     }
 

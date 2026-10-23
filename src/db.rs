@@ -8,8 +8,10 @@ use crate::{
     catalog,
     model::{
         DAY, EnvironmentReadingInput, EnvironmentScope, EnvironmentSnapshot, EnvironmentSource,
-        EnvironmentSummary, EnvironmentValue, EnvironmentValueSource, MAX_INTERVAL, Maintenance,
-        MetricSummary, Plant, PlantEnvironment, Schedule, SunExposure, TaskKind, Taxon,
+        EnvironmentSummary, EnvironmentValue, EnvironmentValueSource, InspectionExtent,
+        InspectionFinding, InspectionFindingInput, InspectionFindingKind, InspectionSeverity,
+        InspectionTrend, MAX_INTERVAL, Maintenance, MetricSummary, PestKind, Plant,
+        PlantEnvironment, PlantPart, Schedule, SunExposure, TaskKind, Taxon,
     },
     settings::{CardSpacing, HomeEnvironment, Settings, TemperatureUnit, Theme},
 };
@@ -77,7 +79,7 @@ impl Database {
     fn initialize(mut conn: Connection) -> Result<Self> {
         conn.busy_timeout(Duration::from_secs(5))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-        if version > 4 {
+        if version > 5 {
             bail!("This database needs a newer plantmon (schema {version})");
         }
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
@@ -107,6 +109,19 @@ impl Database {
                 occurred_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL, note TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS maintenance_lookup ON maintenance(plant_id, kind, occurred_at DESC);
+            CREATE TABLE IF NOT EXISTS inspection_findings (
+                id INTEGER PRIMARY KEY,
+                maintenance_id INTEGER NOT NULL REFERENCES maintenance(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                plant_part TEXT,
+                severity TEXT,
+                extent TEXT,
+                trend TEXT NOT NULL,
+                pest_kind TEXT,
+                note TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS inspection_findings_lookup
+                ON inspection_findings(maintenance_id, id);
             CREATE TABLE IF NOT EXISTS plant_environment (
                 plant_id INTEGER PRIMARY KEY REFERENCES plants(id) ON DELETE CASCADE,
                 sun_exposure TEXT CHECK(sun_exposure IS NULL OR sun_exposure IN ('full_shade','mostly_shade','partial_sun','mostly_sun','full_sun')),
@@ -144,7 +159,7 @@ impl Database {
                  UPDATE plants SET display_order = id;",
             )?;
         }
-        tx.execute_batch("PRAGMA user_version = 4;")?;
+        tx.execute_batch("PRAGMA user_version = 5;")?;
         for taxon in catalog::builtin()? {
             tx.execute("INSERT INTO taxa VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO NOTHING",
                 params![taxon.id, taxon.genus, taxon.species, taxon.designation, taxon.common,
@@ -428,9 +443,58 @@ impl Database {
         Ok(())
     }
 
+    pub fn log_inspection(
+        &mut self,
+        plant: i64,
+        occurred: i64,
+        note: &str,
+        findings: &[InspectionFindingInput],
+        now: i64,
+    ) -> Result<i64> {
+        if occurred > now {
+            bail!("Inspection cannot be recorded in the future");
+        }
+        if findings.is_empty() {
+            bail!("Add at least one inspection finding");
+        }
+        if findings
+            .iter()
+            .any(|finding| finding.kind == InspectionFindingKind::NoAdverseSigns)
+            && findings.iter().any(|finding| finding.kind.is_concern())
+        {
+            bail!("No adverse signs cannot be combined with a concern");
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO maintenance (plant_id,kind,occurred_at,recorded_at,note)
+             VALUES (?1,'inspect',?2,?3,?4)",
+            params![plant, occurred, now, note],
+        )?;
+        let maintenance = tx.last_insert_rowid();
+        for finding in findings {
+            tx.execute(
+                "INSERT INTO inspection_findings
+                    (maintenance_id,kind,plant_part,severity,extent,trend,pest_kind,note)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![
+                    maintenance,
+                    finding.kind.key(),
+                    finding.part.map(PlantPart::key),
+                    finding.severity.map(InspectionSeverity::key),
+                    finding.extent.map(InspectionExtent::key),
+                    finding.trend.key(),
+                    finding.pest.map(PestKind::key),
+                    finding.note,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(maintenance)
+    }
+
     pub fn history(&self, plant: i64) -> Result<Vec<Maintenance>> {
         let mut stmt = self.conn.prepare("SELECT id,kind,occurred_at,note FROM maintenance WHERE plant_id=?1 ORDER BY occurred_at DESC,id DESC")?;
-        Ok(stmt
+        let mut history = stmt
             .query_map([plant], |r| {
                 let key: String = r.get(1)?;
                 Ok(Maintenance {
@@ -438,9 +502,51 @@ impl Database {
                     kind: TaskKind::parse(&key).map_err(|_| rusqlite::Error::InvalidQuery)?,
                     occurred_at: r.get(2)?,
                     note: r.get(3)?,
+                    findings: vec![],
                 })
             })?
-            .collect::<rusqlite::Result<_>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut findings = self.conn.prepare(
+            "SELECT id,kind,plant_part,severity,extent,trend,pest_kind,note
+             FROM inspection_findings WHERE maintenance_id=?1 ORDER BY id",
+        )?;
+        for event in &mut history {
+            event.findings = findings
+                .query_map([event.id], |row| {
+                    let kind: String = row.get(1)?;
+                    let part: Option<String> = row.get(2)?;
+                    let severity: Option<String> = row.get(3)?;
+                    let extent: Option<String> = row.get(4)?;
+                    let trend: String = row.get(5)?;
+                    let pest: Option<String> = row.get(6)?;
+                    Ok(InspectionFinding {
+                        id: row.get(0)?,
+                        kind: InspectionFindingKind::parse(&kind)
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        part: part
+                            .map(|value| PlantPart::parse(&value))
+                            .transpose()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        severity: severity
+                            .map(|value| InspectionSeverity::parse(&value))
+                            .transpose()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        extent: extent
+                            .map(|value| InspectionExtent::parse(&value))
+                            .transpose()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        trend: InspectionTrend::parse(&trend)
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        pest: pest
+                            .map(|value| PestKind::parse(&value))
+                            .transpose()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        note: row.get(7)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+        }
+        Ok(history)
     }
 
     pub fn set_plant_environment(&self, plant: i64, environment: PlantEnvironment) -> Result<()> {
@@ -864,6 +970,69 @@ mod tests {
     }
 
     #[test]
+    fn inspections_store_queryable_findings_and_reject_contradictions() -> Result<()> {
+        let mut db = Database::memory()?;
+        let taxon = db.taxa()?.remove(0);
+        let plant = db.add_plant(&taxon, &PlantInput::default(), 100 * DAY)?;
+        let findings = vec![
+            InspectionFindingInput {
+                kind: InspectionFindingKind::NewLeaf,
+                part: Some(PlantPart::NewGrowth),
+                severity: None,
+                extent: Some(InspectionExtent::Single),
+                trend: InspectionTrend::New,
+                pest: None,
+                note: "unfurling".into(),
+            },
+            InspectionFindingInput {
+                kind: InspectionFindingKind::LeafBrowning,
+                part: Some(PlantPart::Leaf),
+                severity: Some(InspectionSeverity::Mild),
+                extent: Some(InspectionExtent::Localized),
+                trend: InspectionTrend::Stable,
+                pest: None,
+                note: "oldest leaf".into(),
+            },
+        ];
+        let event =
+            db.log_inspection(plant, 99 * DAY, "window-side check", &findings, 100 * DAY)?;
+        let history = db.history(plant)?;
+        assert_eq!(history[0].id, event);
+        assert_eq!(history[0].kind, TaskKind::Inspect);
+        assert_eq!(history[0].findings.len(), 2);
+        assert_eq!(history[0].findings[0].kind, InspectionFindingKind::NewLeaf);
+        assert_eq!(
+            history[0].findings[1].severity,
+            Some(InspectionSeverity::Mild)
+        );
+        assert_eq!(history[0].findings[1].note, "oldest leaf");
+
+        let contradictory = [
+            default_inspection_finding_for_test(InspectionFindingKind::NoAdverseSigns),
+            default_inspection_finding_for_test(InspectionFindingKind::LeafDrop),
+        ];
+        assert!(
+            db.log_inspection(plant, 100 * DAY, "", &contradictory, 100 * DAY)
+                .is_err()
+        );
+        db.remove_event(plant, event)?;
+        assert!(db.history(plant)?.is_empty());
+        Ok(())
+    }
+
+    fn default_inspection_finding_for_test(kind: InspectionFindingKind) -> InspectionFindingInput {
+        InspectionFindingInput {
+            kind,
+            part: None,
+            severity: None,
+            extent: None,
+            trend: InspectionTrend::New,
+            pest: None,
+            note: String::new(),
+        }
+    }
+
+    #[test]
     fn reopening_preserves_collection_history_and_custom_taxa() -> Result<()> {
         let path = std::env::temp_dir().join(format!(
             "plantmon-test-{}-{}.sqlite3",
@@ -926,6 +1095,7 @@ mod tests {
         old.log(id, TaskKind::Water, 99 * DAY, "before migration", 100 * DAY)?;
         old.conn.execute_batch(
             "DROP TABLE settings;
+                 DROP TABLE inspection_findings;
                  ALTER TABLE plants DROP COLUMN display_order;
                  PRAGMA user_version = 1;",
         )?;
@@ -937,7 +1107,7 @@ mod tests {
         assert_eq!(
             db.conn
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            4
+            5
         );
         db.conn.execute_batch("PRAGMA user_version = 99;")?;
         assert!(Database::initialize(db.conn).is_err());
@@ -967,7 +1137,7 @@ mod tests {
         assert_eq!(
             db.conn
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            4
+            5
         );
 
         let mut settings = db.settings()?;
